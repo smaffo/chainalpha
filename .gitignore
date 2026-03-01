@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Environment variables — never commit API keys
+.env.local
+.env*.local
+
+# Database — local data, not source code
+chainalpha.db
+chainalpha.db-shm
+chainalpha.db-wal
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
