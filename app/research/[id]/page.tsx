@@ -107,12 +107,13 @@ export default function ResearchView({
   const [remapping, setRemapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Auto-expand textarea to fit content (max 200px, then scrolls)
+  // Auto-expand textarea: collapse to 0 first so scrollHeight reflects true content height,
+  // then grow to fit. min-height is enforced via inline style on the element.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+    el.style.height = "0";
+    el.style.height = el.scrollHeight + "px";
   }, [editedThesis]);
 
   useEffect(() => {
@@ -255,7 +256,7 @@ export default function ResearchView({
               ref={textareaRef}
               value={editedThesis}
               onChange={(e) => setEditedThesis(e.target.value)}
-              style={{ overflow: "hidden" }}
+              style={{ minHeight: "80px", overflow: "hidden" }}
               className="w-full bg-[#0f0f17] border border-zinc-800 rounded-xl px-4 py-3 pr-8 text-zinc-300 resize-none focus:outline-none focus:border-zinc-600 text-sm leading-relaxed transition-colors"
             />
             <div className="absolute top-3 right-3 pointer-events-none text-zinc-700">
