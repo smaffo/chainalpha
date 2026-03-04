@@ -3,35 +3,29 @@ import { NextResponse } from "next/server";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are a financial research analyst. Use the web_search tool to gather current, accurate information about the company. Search for recent earnings, news, insider transactions, institutional ownership changes, and analyst ratings. After researching, respond with ONLY a valid JSON object matching the exact structure provided. No markdown, no code fences, no explanations — just the raw JSON.`;
+// Keep prompts lean to stay within the 30K token/min rate limit.
+const SYSTEM_PROMPT = `You are a financial research analyst. Use web_search to find current data on the company, then respond with ONLY a valid JSON object — no markdown, no code fences, no explanations.`;
 
-const JSON_SCHEMA = `{
-  "catalysts": [
-    { "text": "Q4 earnings beat estimates, revenue +18% YoY", "date": "Feb 2026", "sentiment": "positive" },
-    { "text": "New $50M defense contract announced", "date": "Jan 2026", "sentiment": "positive" },
-    { "text": "CFO departure announced", "date": "Dec 2025", "sentiment": "negative" }
-  ],
-  "insiderActivity": {
-    "buys": 2,
-    "sells": 1,
-    "netValue": "$340K net purchased",
-    "notable": "CEO bought $220K on Feb 12, 2026"
-  },
-  "smartMoney": {
-    "institutionCount": 245,
-    "topHolders": "Vanguard, BlackRock, State Street",
-    "recentChanges": "2 new positions initiated, Vanguard increased 12%"
-  },
-  "analystSentiment": {
-    "buy": 3,
-    "hold": 1,
-    "sell": 0,
-    "avgPriceTarget": "$145",
-    "currentPrice": "$118",
-    "upside": "+23%"
-  },
-  "lastUpdated": "2026-03-04"
-}`;
+// Compact schema: keys only, no verbose example values.
+const JSON_SCHEMA = `{"catalysts":[{"text":"...","date":"Mon YYYY","sentiment":"positive|negative|neutral"}],"insiderActivity":{"buys":0,"sells":0,"netValue":"...","notable":"..."},"smartMoney":{"institutionCount":0,"topHolders":"...","recentChanges":"..."},"analystSentiment":{"buy":0,"hold":0,"sell":0,"avgPriceTarget":"...","currentPrice":"...","upside":"+X%"},"lastUpdated":"YYYY-MM-DD"}`;
+
+const DELAY_MS = 6000; // wait before retrying a 429
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callAnthropic(userPrompt: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return client.beta.messages.create({
+    model: "claude-sonnet-4-5-20250929",
+    max_tokens: 1024,
+    system: SYSTEM_PROMPT,
+    betas: ["web-search-2025-03-05"],
+    tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+}
 
 export async function GET(
   request: Request,
@@ -45,19 +39,24 @@ export async function GET(
     return NextResponse.json({ error: "API key not configured" }, { status: 500 });
   }
 
-  const userPrompt = `Research ${companyName} (ticker: ${ticker}). Find the latest news, recent earnings results, insider buying/selling activity in the last 90 days, institutional holder changes, and analyst ratings. Return ONLY a JSON object with the exact structure specified, no markdown, no backticks, no explanation.\n\nThe JSON must have exactly this structure:\n${JSON_SCHEMA}`;
+  const userPrompt = `Research ${companyName} (${ticker}): latest news, Q4/recent earnings, insider transactions last 90 days, institutional holder changes, analyst ratings. Return ONLY this JSON structure: ${JSON_SCHEMA}`;
 
   try {
-    // Use beta client for web search tool
-    const response = await client.beta.messages.create({
-      model: "claude-sonnet-4-5-20250929",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      betas: ["web-search-2025-03-05"],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
-      messages: [{ role: "user", content: userPrompt }],
-    });
+    let response;
+    try {
+      response = await callAnthropic(userPrompt);
+    } catch (err: unknown) {
+      // Retry once after a delay on rate limit
+      if (
+        err instanceof Error &&
+        err.message.includes("429")
+      ) {
+        await sleep(DELAY_MS);
+        response = await callAnthropic(userPrompt);
+      } else {
+        throw err;
+      }
+    }
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -74,8 +73,14 @@ export async function GET(
 
     const data = JSON.parse(jsonMatch[0]);
     return NextResponse.json(data);
-  } catch (err) {
+  } catch (err: unknown) {
     console.error("Deep dive error:", err);
+    if (err instanceof Error && err.message.includes("429")) {
+      return NextResponse.json(
+        { error: "Rate limit hit — wait a moment and try again" },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Research failed" }, { status: 500 });
   }
 }
