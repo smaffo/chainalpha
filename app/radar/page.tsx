@@ -61,6 +61,85 @@ function isInvestable(ticker: string): boolean {
   return ticker.toLowerCase() !== "private" && VALID_TICKER.test(ticker);
 }
 
+// ── Signal Score ───────────────────────────────────────────────────────────
+// Max 100 = cross-thesis (40) + best tier (20) + bottleneck (40)
+
+function calcSignalScore(company: RadarCompany): number {
+  const count = company.appearances.length;
+  const crossPts = count >= 5 ? 40 : count === 4 ? 35 : count === 3 ? 25 : 15;
+
+  const bestTier = Math.max(...company.appearances.map((a) => a.tier));
+  const tierPts = bestTier === 3 ? 20 : bestTier === 2 ? 15 : bestTier === 1 ? 10 : 5;
+
+  const bnCount = company.appearances.filter((a) => a.bottleneck).length;
+  const bnPts = bnCount >= 2 ? 40 : bnCount === 1 ? 25 : 0;
+
+  return crossPts + tierPts + bnPts;
+}
+
+function signalScoreColor(score: number): string {
+  if (score >= 70) return "text-emerald-400";
+  if (score >= 40) return "text-amber-400";
+  return "text-zinc-500";
+}
+
+// ── Conviction Score ───────────────────────────────────────────────────────
+// Starts at Signal Score, adjusted by deep dive data, clamped 0–100.
+
+function calcConvictionScore(signalScore: number, data: DeepDiveData): number {
+  let score = signalScore;
+
+  // Insider activity
+  const { buys, sells, notable } = data.insiderActivity;
+  const notableLower = notable.toLowerCase();
+  if (buys >= 3) {
+    score += 15; // cluster buying
+  } else if (buys > sells) {
+    score += 10; // net buying
+  } else if (sells > buys) {
+    if (notableLower.includes("ceo") || notableLower.includes("cfo")) {
+      score -= 15; // heavy C-suite selling
+    } else {
+      score -= 10; // net selling
+    }
+  }
+
+  // Analyst sentiment
+  const { buy, hold, sell, upside } = data.analystSentiment;
+  const upsideNum = parseFloat(upside.replace(/[^0-9.]/g, "")) || 0;
+  const upsidePct = upside.trimStart().startsWith("-") ? -upsideNum : upsideNum;
+  if (buy > hold + sell && upsidePct > 20) {
+    score += 10;
+  } else if (sell > buy) {
+    score -= 10;
+  }
+
+  // Institutional momentum
+  const changes = data.smartMoney.recentChanges.toLowerCase();
+  if (changes.includes("new position")) {
+    score += 10;
+  } else if (changes.includes("increas") || changes.includes("added")) {
+    score += 5;
+  } else if (
+    changes.includes("trim") ||
+    changes.includes("decreas") ||
+    changes.includes("reduc")
+  ) {
+    score -= 5;
+  }
+
+  // Catalysts
+  const posCount = data.catalysts.filter((c) => c.sentiment === "positive").length;
+  const negCount = data.catalysts.filter((c) => c.sentiment === "negative").length;
+  if (posCount > negCount + 1) {
+    score += 5;
+  } else if (negCount > posCount) {
+    score -= 5;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
 // ── Tier helpers ───────────────────────────────────────────────────────────
 
 const TIER_LABEL = ["T0", "T1", "T2", "T3"] as const;
@@ -292,6 +371,7 @@ function ModalBody({ cacheEntry }: { cacheEntry: CacheEntry }) {
 interface DeepDiveModalProps {
   ticker: string;
   name: string;
+  signalScore: number;
   cacheEntry: CacheEntry;
   onClose: () => void;
   onRefresh: () => void;
@@ -300,6 +380,7 @@ interface DeepDiveModalProps {
 function DeepDiveModal({
   ticker,
   name,
+  signalScore,
   cacheEntry,
   onClose,
   onRefresh,
@@ -311,6 +392,11 @@ function DeepDiveModal({
       document.body.style.overflow = "";
     };
   }, []);
+
+  const convictionData =
+    cacheEntry.status === "done"
+      ? calcConvictionScore(signalScore, cacheEntry.data)
+      : null;
 
   return (
     <div
@@ -325,15 +411,40 @@ function DeepDiveModal({
         {/* Header */}
         <div className="flex items-start justify-between px-5 py-4 border-b border-[#1a1d28] flex-shrink-0">
           <div>
-            {cacheEntry.status === "loading" ? (
-              <p className="font-mono text-sm text-zinc-500 animate-pulse">
+            {cacheEntry.status === "loading" && (
+              <p className="font-mono text-xs text-zinc-500 animate-pulse mb-1">
                 Researching {ticker}…
               </p>
-            ) : null}
+            )}
             <div className="font-mono text-xl font-bold text-emerald-400">
               {ticker}
             </div>
             <div className="text-zinc-500 text-xs mt-0.5">{name}</div>
+            {/* Score line */}
+            <div className="mt-2 font-mono text-xs text-zinc-600 flex items-center gap-1.5">
+              <span>Signal</span>
+              <span className={signalScoreColor(signalScore)}>{signalScore}</span>
+              {convictionData !== null && (() => {
+                const delta = convictionData - signalScore;
+                const neutral = Math.abs(delta) <= 5;
+                const arrow = neutral ? "→" : delta > 0 ? "↑" : "↓";
+                const arrowCls = neutral
+                  ? "text-zinc-500"
+                  : delta > 0
+                  ? "text-emerald-400"
+                  : "text-red-400";
+                return (
+                  <>
+                    <span className="text-zinc-700">→</span>
+                    <span>Conviction</span>
+                    <span className={signalScoreColor(convictionData)}>
+                      {convictionData}
+                    </span>
+                    <span className={arrowCls}>{arrow}</span>
+                  </>
+                );
+              })()}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -425,14 +536,15 @@ export default function Radar() {
     if (deepDiveTicker) fetchDeepDive(deepDiveTicker, deepDiveName);
   }
 
-  const filtered = companies
+  const scoredFiltered = companies
     .filter((c) => isInvestable(c.ticker))
     .filter((c) => !bottleneckOnly || c.anyBottleneck)
-    .filter(
-      (c) => minTier === 0 || c.appearances.some((a) => a.tier >= minTier)
-    );
+    .filter((c) => minTier === 0 || c.appearances.some((a) => a.tier >= minTier))
+    .map((c) => ({ company: c, score: calcSignalScore(c) }))
+    .sort((a, b) => b.score - a.score);
 
-  const bottleneckCount = filtered.filter((c) => c.anyBottleneck).length;
+  const bottleneckCount = scoredFiltered.filter((e) => e.company.anyBottleneck).length;
+  const topSignal = scoredFiltered[0] ?? null;
 
   // ── Loading ──────────────────────────────────────────────────────────────
 
@@ -460,15 +572,19 @@ export default function Radar() {
   return (
     <>
       {/* Deep Dive Modal */}
-      {deepDiveTicker && deepDiveCache[deepDiveTicker] && (
-        <DeepDiveModal
-          ticker={deepDiveTicker}
-          name={deepDiveName}
-          cacheEntry={deepDiveCache[deepDiveTicker]}
-          onClose={() => setDeepDiveTicker(null)}
-          onRefresh={handleRefresh}
-        />
-      )}
+      {deepDiveTicker && deepDiveCache[deepDiveTicker] && (() => {
+        const entry = scoredFiltered.find((e) => e.company.ticker === deepDiveTicker);
+        return (
+          <DeepDiveModal
+            ticker={deepDiveTicker}
+            name={deepDiveName}
+            signalScore={entry?.score ?? 0}
+            cacheEntry={deepDiveCache[deepDiveTicker]}
+            onClose={() => setDeepDiveTicker(null)}
+            onRefresh={handleRefresh}
+          />
+        );
+      })()}
 
       <div className="min-h-screen px-6 py-12">
         <div className="max-w-5xl mx-auto">
@@ -488,7 +604,7 @@ export default function Radar() {
             <div className="mb-4 flex items-center gap-6 px-4 py-3 rounded-xl border border-zinc-800 bg-[#0c0c14]">
               <div className="flex flex-col gap-0.5">
                 <span className="font-mono text-xl font-bold text-white tabular-nums">
-                  {filtered.length}
+                  {scoredFiltered.length}
                 </span>
                 <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
                   signals
@@ -503,6 +619,20 @@ export default function Radar() {
                   bottlenecks
                 </span>
               </div>
+              {topSignal && (
+                <>
+                  <div className="w-px h-8 bg-zinc-800" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`font-mono text-xl font-bold tabular-nums ${signalScoreColor(topSignal.score)}`}>
+                      {topSignal.company.ticker}{" "}
+                      <span className="text-base">{topSignal.score}</span>
+                    </span>
+                    <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
+                      top signal
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -580,20 +710,20 @@ export default function Radar() {
           )}
 
           {/* Empty state — filters zeroed results */}
-          {!loading && companies.length > 0 && filtered.length === 0 && (
+          {!loading && companies.length > 0 && scoredFiltered.length === 0 && (
             <p className="text-zinc-600 text-sm font-mono text-center py-16">
               No signals match the current filters.
             </p>
           )}
 
           {/* Company list */}
-          {filtered.length > 0 && (
+          {scoredFiltered.length > 0 && (
             <div className="rounded-xl border border-zinc-800 overflow-hidden">
-              {filtered.map((company, idx) => (
+              {scoredFiltered.map(({ company, score }, idx) => (
                 <div
                   key={company.ticker}
                   className={`flex items-start gap-0 ${
-                    idx !== filtered.length - 1
+                    idx !== scoredFiltered.length - 1
                       ? "border-b border-zinc-800/70"
                       : ""
                   }`}
@@ -646,9 +776,14 @@ export default function Radar() {
                       ))}
                     </div>
 
-                    {/* Right: count + deep dive button */}
+                    {/* Right: signal score + count + deep dive */}
                     <div className="flex-shrink-0 flex flex-col items-end gap-2">
-                      <span className="font-mono text-xs text-zinc-500 tabular-nums">
+                      <span
+                        className={`font-mono text-sm font-bold tabular-nums ${signalScoreColor(score)}`}
+                      >
+                        {score}
+                      </span>
+                      <span className="font-mono text-xs text-zinc-600 tabular-nums">
                         {company.appearances.length}×
                       </span>
                       {company.anyBottleneck && (
