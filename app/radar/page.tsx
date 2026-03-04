@@ -83,6 +83,12 @@ function signalScoreColor(score: number): string {
   return "text-zinc-500";
 }
 
+function convictionScoreColor(score: number): string {
+  if (score >= 60) return "text-emerald-400";
+  if (score >= 40) return "text-amber-400";
+  return "text-red-400";
+}
+
 // ── Conviction Score ───────────────────────────────────────────────────────
 // Starts at Signal Score, adjusted by deep dive data, clamped 0–100.
 
@@ -426,18 +432,18 @@ function DeepDiveModal({
               <span className={signalScoreColor(signalScore)}>{signalScore}</span>
               {convictionData !== null && (() => {
                 const delta = convictionData - signalScore;
-                const neutral = Math.abs(delta) <= 5;
-                const arrow = neutral ? "→" : delta > 0 ? "↑" : "↓";
-                const arrowCls = neutral
-                  ? "text-zinc-500"
-                  : delta > 0
-                  ? "text-emerald-400"
-                  : "text-red-400";
+                const arrow = delta > 5 ? "↑" : delta < -5 ? "↓" : "→";
+                const arrowCls =
+                  delta > 5
+                    ? "text-emerald-400"
+                    : delta < -5
+                    ? "text-red-400"
+                    : "text-zinc-600";
                 return (
                   <>
-                    <span className="text-zinc-700">→</span>
+                    <span className="text-zinc-800">→</span>
                     <span>Conviction</span>
-                    <span className={signalScoreColor(convictionData)}>
+                    <span className={convictionScoreColor(convictionData)}>
                       {convictionData}
                     </span>
                     <span className={arrowCls}>{arrow}</span>
