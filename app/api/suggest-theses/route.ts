@@ -9,10 +9,11 @@ const client = new Anthropic({
   maxRetries: 2,
 });
 
-// No web search — keeps token usage low and avoids rate limits.
 const SYSTEM_PROMPT = `You are an elite macro research analyst specializing in supply chain intelligence. Generate non-obvious, specific investment theses focused on supply chain dynamics — second and third-order effects, not well-known themes.
 
 Each thesis: 2-3 sentences covering the macro trend, why it matters NOW, and the supply chain angle. Avoid overlap with the user's existing theses.
+
+Each suggestion MUST cover a DIFFERENT sector and geography. Spread across: energy, technology, materials, healthcare, agriculture, infrastructure, defense, logistics, chemicals, water, mining, biotech, shipping, real estate, telecom. Never suggest two theses from the same sector. Think globally: include opportunities in Europe, Asia, Latin America, Middle East, Africa — not just US-centric themes.
 
 Return ONLY a JSON array, no markdown, no backticks:
 [{"title":"3-5 word title","thesis":"2-3 sentence thesis with supply chain angle","catalyst":"What makes this timely right now"}]
@@ -47,24 +48,51 @@ function apiErrorMessage(err: unknown): string | null {
   return null;
 }
 
+function normalise(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 async function generateAndCache(): Promise<NextResponse> {
-  const { data: rows } = await supabase
-    .from("theses")
-    .select("title, thesis_text")
-    .order("last_mapped_at", { ascending: false })
-    .limit(10);
+  // Fetch existing theses, current suggestions cache, and watchlist in parallel
+  const [{ data: thesesRows }, { data: cachedRows }, { data: watchlistRows }] =
+    await Promise.all([
+      supabase
+        .from("theses")
+        .select("title, thesis_text")
+        .order("last_mapped_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("suggested_theses")
+        .select("title"),
+      supabase
+        .from("watchlist")
+        .select("title"),
+    ]);
 
   const existingList =
-    (rows ?? []).length > 0
-      ? (rows ?? []).map((t) => `- ${t.title || generateTitle(t.thesis_text)}`).join("\n")
+    (thesesRows ?? []).length > 0
+      ? (thesesRows ?? []).map((t) => `- ${t.title || generateTitle(t.thesis_text)}`).join("\n")
       : "None yet.";
 
+  const previousSuggestions = (cachedRows ?? []).map((s) => s.title).filter(Boolean);
+  const watchlistTitles = (watchlistRows ?? []).map((w) => w.title).filter(Boolean);
+
   const today = new Date().toISOString().split("T")[0];
-  const userPrompt = `Current date: ${today}. User's existing theses:\n${existingList}\n\nSuggest 4 NEW supply chain investment theses that complement but don't overlap with the above. Focus on non-obvious, timely opportunities.`;
+
+  let userPrompt = `Current date: ${today}. User's existing theses:\n${existingList}\n\nSuggest 4 NEW supply chain investment theses that complement but don't overlap with the above. Focus on non-obvious, timely opportunities.`;
+
+  if (previousSuggestions.length > 0) {
+    userPrompt += `\n\nIMPORTANT: Do NOT repeat or rephrase any of these previously suggested theses: ${previousSuggestions.map((t) => `"${t}"`).join(", ")}. Generate completely NEW and DIFFERENT theses covering different sectors, geographies, and supply chain dynamics.`;
+  }
+
+  if (watchlistTitles.length > 0) {
+    userPrompt += `\n\nAlso do NOT suggest theses similar to these watchlist items: ${watchlistTitles.map((t) => `"${t}"`).join(", ")}.`;
+  }
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 1024,
+    temperature: 0.9,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
   });
@@ -82,13 +110,24 @@ async function generateAndCache(): Promise<NextResponse> {
     return NextResponse.json({ error: "Couldn't generate suggestions right now — try again" }, { status: 500 });
   }
 
-  const data = parsed as Array<{ title: string; thesis: string; catalyst: string }>;
+  let data = parsed as Array<{ title: string; thesis: string; catalyst: string }>;
 
-  // Replace cache — delete all then re-insert
+  // Filter out any suggestion whose title closely matches a watchlist item
+  if (watchlistTitles.length > 0) {
+    const normalisedWatchlist = watchlistTitles.map(normalise);
+    data = data.filter((s) => {
+      const norm = normalise(s.title);
+      return !normalisedWatchlist.some((w) => w === norm || w.includes(norm) || norm.includes(w));
+    });
+  }
+
+  // Replace cache — always wipe first for a clean slate
   await supabase.from("suggested_theses").delete().gte("id", 1);
-  await supabase.from("suggested_theses").insert(
-    data.map((s) => ({ title: s.title, thesis_text: s.thesis, catalyst: s.catalyst }))
-  );
+  if (data.length > 0) {
+    await supabase.from("suggested_theses").insert(
+      data.map((s) => ({ title: s.title, thesis_text: s.thesis, catalyst: s.catalyst }))
+    );
+  }
 
   return NextResponse.json(data.map((s) => ({ title: s.title, thesis: s.thesis, catalyst: s.catalyst })));
 }
@@ -100,7 +139,10 @@ export async function GET(req: NextRequest) {
 
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
 
-  if (!refresh) {
+  // On explicit refresh: wipe the cache immediately so generateAndCache starts clean
+  if (refresh) {
+    await supabase.from("suggested_theses").delete().gte("id", 1);
+  } else {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: cached } = await supabase
       .from("suggested_theses")
