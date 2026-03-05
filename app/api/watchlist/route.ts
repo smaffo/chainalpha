@@ -15,6 +15,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "thesis_text required" }, { status: 400 });
   }
   const db = getDb();
+  const existing = db
+    .prepare(`SELECT id FROM watchlist WHERE thesis_text = ?`)
+    .get(thesis_text) as { id: number } | undefined;
+  if (existing) {
+    return NextResponse.json({ duplicate: true, id: existing.id });
+  }
   const result = db
     .prepare(`INSERT INTO watchlist (title, thesis_text, catalyst) VALUES (?, ?, ?)`)
     .run(title ?? "", thesis_text, catalyst ?? "");

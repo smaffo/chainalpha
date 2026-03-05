@@ -65,6 +65,24 @@ function IconHome({ className }: { className?: string }) {
   );
 }
 
+function IconBookmark({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 function IconLibrary({ className }: { className?: string }) {
   return (
     <svg
@@ -101,6 +119,12 @@ export function NavSidebar() {
       icon: IconRadar,
       label: "Radar",
       active: pathname.startsWith("/radar"),
+    },
+    {
+      href: "/watchlist",
+      icon: IconBookmark,
+      label: "Watchlist",
+      active: pathname.startsWith("/watchlist"),
     },
     {
       href: "/library",

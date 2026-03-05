@@ -6,27 +6,10 @@ import Link from "next/link";
 import { SavedThesis } from "@/lib/types";
 import { formatDate, generateTitle } from "@/lib/utils";
 
-interface WatchlistItem {
-  id: number;
-  title: string;
-  thesis_text: string;
-  catalyst: string;
-  added_at: string;
-}
-
 function IconTrash({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
       <path d="M10 11v6" />
@@ -36,25 +19,13 @@ function IconTrash({ className }: { className?: string }) {
   );
 }
 
-function IconChevron({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M19 9l-7 7-7-7" />
-    </svg>
-  );
-}
-
-// Left strip color per dominant tier
 const DOMINANT_STRIP = [
-  "bg-zinc-600",     // tier 0
-  "bg-amber-500",    // tier 1
-  "bg-emerald-500",  // tier 2
-  "bg-purple-500",   // tier 3
+  "bg-zinc-600",
+  "bg-amber-500",
+  "bg-emerald-500",
+  "bg-purple-500",
 ] as const;
 
-// Returns the highest-alpha tier that has the most companies.
-// Ties are broken in favor of the higher (more alpha) tier.
 function getDominantTier(t: SavedThesis): number {
   const counts = [t.tier0_count, t.tier1_count, t.tier2_count, t.tier3_count];
   let best = 0;
@@ -70,10 +41,6 @@ export default function Library() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [watchlistOpen, setWatchlistOpen] = useState(true);
-  const [mappingId, setMappingId] = useState<number | null>(null);
-
   async function fetchTheses() {
     try {
       const res = await fetch("/api/theses");
@@ -83,37 +50,9 @@ export default function Library() {
     }
   }
 
-  async function fetchWatchlist() {
-    const res = await fetch("/api/watchlist");
-    if (res.ok) setWatchlist(await res.json());
-  }
-
   useEffect(() => {
     fetchTheses();
-    fetchWatchlist();
   }, []);
-
-  async function handleMapWatchlistItem(item: WatchlistItem) {
-    setMappingId(item.id);
-    try {
-      const res = await fetch("/api/map-thesis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thesis: item.thesis_text }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Request failed");
-      router.push(`/research/${data.thesisId}`);
-    } catch {
-      setMappingId(null);
-    }
-  }
-
-  async function handleRemoveWatchlist(e: React.MouseEvent, id: number) {
-    e.stopPropagation();
-    await fetch(`/api/watchlist/${id}`, { method: "DELETE" });
-    setWatchlist((prev) => prev.filter((w) => w.id !== id));
-  }
 
   async function handleDelete(e: React.MouseEvent, id: number) {
     e.stopPropagation();
@@ -135,12 +74,8 @@ export default function Library() {
         {/* Header */}
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
-              My Theses
-            </h1>
-            <p className="text-zinc-500 text-sm mt-1 font-mono">
-              {theses.length} saved
-            </p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">My Theses</h1>
+            <p className="text-zinc-500 text-sm mt-1 font-mono">{theses.length} saved</p>
           </div>
           <Link href="/">
             <button className="px-4 py-2 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 transition-all">
@@ -148,63 +83,6 @@ export default function Library() {
             </button>
           </Link>
         </div>
-
-        {/* Watchlist panel */}
-        {watchlist.length > 0 && (
-          <div className="mb-8 border border-zinc-800/60 rounded-xl overflow-hidden">
-            <button
-              onClick={() => setWatchlistOpen((o) => !o)}
-              className="w-full flex items-center justify-between px-5 py-3.5 bg-[#0c0c14] hover:bg-[#0f0f1a] transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="font-semibold text-white text-sm">Watchlist</span>
-                <span className="font-mono text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
-                  {watchlist.length}
-                </span>
-              </div>
-              <IconChevron className={`text-zinc-500 transition-transform ${watchlistOpen ? "rotate-180" : ""}`} />
-            </button>
-
-            {watchlistOpen && (
-              <div className="divide-y divide-zinc-800/50">
-                {watchlist.map((item) => (
-                  <div key={item.id} className="px-5 py-4 bg-[#0a0a0f] flex items-start gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-semibold mb-1">{item.title}</p>
-                      <p className="text-zinc-500 text-xs leading-relaxed line-clamp-2 mb-2">
-                        {item.thesis_text}
-                      </p>
-                      {item.catalyst && (
-                        <span className="inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
-                          {item.catalyst}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                      <span className="font-mono text-xs text-zinc-600">
-                        {formatDate(item.added_at)}
-                      </span>
-                      <button
-                        onClick={() => handleMapWatchlistItem(item)}
-                        disabled={mappingId === item.id}
-                        className="font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                      >
-                        {mappingId === item.id ? "Mapping…" : "Map this thesis →"}
-                      </button>
-                      <button
-                        onClick={(e) => handleRemoveWatchlist(e, item.id)}
-                        title="Remove from watchlist"
-                        className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-zinc-800/60 rounded-lg transition-colors"
-                      >
-                        <IconTrash />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Search */}
         {theses.length > 0 && (
@@ -224,11 +102,8 @@ export default function Library() {
           <div className="flex items-center justify-center py-24">
             <div className="flex gap-1.5">
               {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="w-1.5 h-4 rounded-full bg-zinc-800 animate-pulse"
-                  style={{ animationDelay: `${i * 150}ms` }}
-                />
+                <div key={i} className="w-1.5 h-4 rounded-full bg-zinc-800 animate-pulse"
+                  style={{ animationDelay: `${i * 150}ms` }} />
               ))}
             </div>
           </div>
@@ -266,16 +141,10 @@ export default function Library() {
                 onClick={() => router.push(`/research/${t.id}`)}
                 className="group relative rounded-2xl border border-zinc-800/50 bg-[#0c0c14] hover:border-zinc-700/60 cursor-pointer transition-all flex overflow-hidden"
               >
-                {/* Dominant-tier left strip */}
                 <div className={`w-1 flex-shrink-0 ${DOMINANT_STRIP[dominant]}`} />
-
-                {/* Card content */}
                 <div className="flex-1 p-5 flex flex-col min-w-0">
-                  {/* Title + delete */}
                   <div className="flex items-start justify-between gap-2 mb-3">
-                    <h2 className="text-white font-semibold text-sm leading-snug">
-                      {displayTitle}
-                    </h2>
+                    <h2 className="text-white font-semibold text-sm leading-snug">{displayTitle}</h2>
                     <button
                       onClick={(e) => handleDelete(e, t.id)}
                       title="Delete"
@@ -284,38 +153,25 @@ export default function Library() {
                       <IconTrash />
                     </button>
                   </div>
-
-                  {/* Thesis snippet */}
                   <p className="text-zinc-500 text-xs leading-relaxed line-clamp-3 flex-1 mb-4">
                     {t.thesis_text}
                   </p>
-
-                  {/* Footer metrics */}
                   <div className="mt-auto space-y-2.5">
-                    {/* Key stats */}
                     <div className="flex items-center gap-3">
                       {t.bottleneck_count > 0 && (
                         <span className="font-mono text-xs text-amber-500">
-                          ⚡ {t.bottleneck_count} bottleneck
-                          {t.bottleneck_count !== 1 ? "s" : ""}
+                          ⚡ {t.bottleneck_count} bottleneck{t.bottleneck_count !== 1 ? "s" : ""}
                         </span>
                       )}
                       {hiddenGems > 0 && (
                         <span className="font-mono text-xs text-emerald-600">
-                          {hiddenGems} hidden gem
-                          {hiddenGems !== 1 ? "s" : ""}
+                          {hiddenGems} hidden gem{hiddenGems !== 1 ? "s" : ""}
                         </span>
                       )}
                     </div>
-
-                    {/* Date + total count */}
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs text-zinc-600">
-                        {formatDate(t.last_mapped_at)}
-                      </span>
-                      <span className="font-mono text-xs text-zinc-600">
-                        {t.company_count} co.
-                      </span>
+                      <span className="font-mono text-xs text-zinc-600">{formatDate(t.last_mapped_at)}</span>
+                      <span className="font-mono text-xs text-zinc-600">{t.company_count} co.</span>
                     </div>
                   </div>
                 </div>
