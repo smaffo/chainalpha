@@ -15,6 +15,29 @@ Each thesis: 2-3 sentences covering the macro trend, why it matters NOW, and the
 
 Each suggestion MUST cover a DIFFERENT sector and geography. Spread across: energy, technology, materials, healthcare, agriculture, infrastructure, defense, logistics, chemicals, water, mining, biotech, shipping, real estate, telecom. Never suggest two theses from the same sector. Think globally: include opportunities in Europe, Asia, Latin America, Middle East, Africa — not just US-centric themes.
 
+CRITICAL RULES FOR THESIS QUALITY:
+
+1. GLOBAL IMPACT: Each thesis must describe a macro trend with GLOBAL implications — not hyper-local infrastructure projects. Think: 'AI data centers need immersion cooling globally' not 'Indonesian nickel smelter logistics'. The trend should affect multiple countries and industries.
+
+2. INVESTABLE SUPPLY CHAINS: The supply chain you're hinting at must lead to PUBLICLY TRADED companies on major exchanges (NYSE, NASDAQ, LSE, Frankfurt, Tokyo). If most companies in the chain would be private or listed on obscure local exchanges, it's a bad thesis for this tool.
+
+3. STRUCTURAL, NOT GEOGRAPHIC: Frame theses around structural shifts (technology transitions, regulatory changes, resource constraints, demand inflections) rather than geographic projects. Good: 'Global semiconductor packaging bottleneck as advanced chips require CoWoS technology' Bad: 'Middle East pharmaceutical cold storage'
+
+4. SECOND-ORDER EFFECTS: The best theses trace from an obvious trend to a non-obvious supply chain consequence. Example: 'AI compute demand → power consumption surge → grid transformer shortage → specialty electrical steel suppliers become bottlenecks'
+
+5. SCALE: Each thesis should represent at least a $50B+ addressable market shift, not niche local opportunities.
+
+Examples of GOOD theses:
+- 'Immersion cooling becomes mandatory for next-gen AI data centers, creating bottlenecks in engineered fluids, precision manifolds, and heat exchanger manufacturing'
+- 'Global grid infrastructure can't keep pace with electrification — transformer lead times stretch to 3 years, benefiting grain-oriented electrical steel and bushing manufacturers'
+- 'Weight-loss drug boom forces reformulation across food, beverage, and packaging industries — supply chains for protein fortification, reduced-sugar processing, and smaller portion packaging shift'
+
+Examples of BAD theses:
+- 'Argentine lithium rail resurrection'
+- 'Indonesian nickel smelter logistics'
+- 'Middle East pharmaceutical cold storage'
+- Any thesis where most beneficiaries would be private companies
+
 Return ONLY a JSON array, no markdown, no backticks:
 [{"title":"3-5 word title","thesis":"2-3 sentence thesis with supply chain angle","catalyst":"What makes this timely right now"}]
 
