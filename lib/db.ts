@@ -26,6 +26,22 @@ function initSchema(db: Database.Database): void {
       last_mapped_at TEXT    NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS suggested_theses (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT    NOT NULL,
+      thesis_text TEXT    NOT NULL,
+      catalyst    TEXT    NOT NULL,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS watchlist (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT    NOT NULL,
+      thesis_text TEXT    NOT NULL,
+      catalyst    TEXT    NOT NULL,
+      added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS chain_results (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       thesis_id         INTEGER NOT NULL REFERENCES theses(id) ON DELETE CASCADE,

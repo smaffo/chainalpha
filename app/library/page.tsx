@@ -6,6 +6,14 @@ import Link from "next/link";
 import { SavedThesis } from "@/lib/types";
 import { formatDate, generateTitle } from "@/lib/utils";
 
+interface WatchlistItem {
+  id: number;
+  title: string;
+  thesis_text: string;
+  catalyst: string;
+  added_at: string;
+}
+
 function IconTrash({ className }: { className?: string }) {
   return (
     <svg
@@ -24,6 +32,15 @@ function IconTrash({ className }: { className?: string }) {
       <path d="M10 11v6" />
       <path d="M14 11v6" />
       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
+}
+
+function IconChevron({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 9l-7 7-7-7" />
     </svg>
   );
 }
@@ -53,6 +70,10 @@ export default function Library() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [watchlistOpen, setWatchlistOpen] = useState(true);
+  const [mappingId, setMappingId] = useState<number | null>(null);
+
   async function fetchTheses() {
     try {
       const res = await fetch("/api/theses");
@@ -62,9 +83,37 @@ export default function Library() {
     }
   }
 
+  async function fetchWatchlist() {
+    const res = await fetch("/api/watchlist");
+    if (res.ok) setWatchlist(await res.json());
+  }
+
   useEffect(() => {
     fetchTheses();
+    fetchWatchlist();
   }, []);
+
+  async function handleMapWatchlistItem(item: WatchlistItem) {
+    setMappingId(item.id);
+    try {
+      const res = await fetch("/api/map-thesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thesis: item.thesis_text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      router.push(`/research/${data.thesisId}`);
+    } catch {
+      setMappingId(null);
+    }
+  }
+
+  async function handleRemoveWatchlist(e: React.MouseEvent, id: number) {
+    e.stopPropagation();
+    await fetch(`/api/watchlist/${id}`, { method: "DELETE" });
+    setWatchlist((prev) => prev.filter((w) => w.id !== id));
+  }
 
   async function handleDelete(e: React.MouseEvent, id: number) {
     e.stopPropagation();
@@ -99,6 +148,63 @@ export default function Library() {
             </button>
           </Link>
         </div>
+
+        {/* Watchlist panel */}
+        {watchlist.length > 0 && (
+          <div className="mb-8 border border-zinc-800/60 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setWatchlistOpen((o) => !o)}
+              className="w-full flex items-center justify-between px-5 py-3.5 bg-[#0c0c14] hover:bg-[#0f0f1a] transition-colors"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="font-semibold text-white text-sm">Watchlist</span>
+                <span className="font-mono text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
+                  {watchlist.length}
+                </span>
+              </div>
+              <IconChevron className={`text-zinc-500 transition-transform ${watchlistOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {watchlistOpen && (
+              <div className="divide-y divide-zinc-800/50">
+                {watchlist.map((item) => (
+                  <div key={item.id} className="px-5 py-4 bg-[#0a0a0f] flex items-start gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-semibold mb-1">{item.title}</p>
+                      <p className="text-zinc-500 text-xs leading-relaxed line-clamp-2 mb-2">
+                        {item.thesis_text}
+                      </p>
+                      {item.catalyst && (
+                        <span className="inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                          {item.catalyst}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                      <span className="font-mono text-xs text-zinc-600">
+                        {formatDate(item.added_at)}
+                      </span>
+                      <button
+                        onClick={() => handleMapWatchlistItem(item)}
+                        disabled={mappingId === item.id}
+                        className="font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {mappingId === item.id ? "Mapping…" : "Map this thesis →"}
+                      </button>
+                      <button
+                        onClick={(e) => handleRemoveWatchlist(e, item.id)}
+                        title="Remove from watchlist"
+                        className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-zinc-800/60 rounded-lg transition-colors"
+                      >
+                        <IconTrash />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Search */}
         {theses.length > 0 && (

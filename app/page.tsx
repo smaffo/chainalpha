@@ -17,6 +17,24 @@ const SUGGESTION_BORDERS = [
   "border-l-purple-600",
 ] as const;
 
+function IconBookmark({ filled, className }: { filled?: boolean; className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const router = useRouter();
   const [thesis, setThesis] = useState("");
@@ -32,6 +50,8 @@ export default function Home() {
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  // saved[i] = "idle" | "saving" | "saved"
+  const [saved, setSaved] = useState<Record<number, "idle" | "saving" | "saved">>({});
 
   useEffect(() => {
     fetch("/api/theses")
@@ -42,6 +62,14 @@ export default function Home() {
           companies: data.reduce((s, t) => s + t.company_count, 0),
           bottlenecks: data.reduce((s, t) => s + t.bottleneck_count, 0),
         });
+      })
+      .catch(() => {});
+
+    // Load cached suggestions (last 24h)
+    fetch("/api/suggest-theses")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) setSuggestions(data);
       })
       .catch(() => {});
   }, []);
@@ -67,12 +95,14 @@ export default function Home() {
     }
   }
 
-  async function fetchSuggestions() {
+  async function fetchSuggestions(refresh = false) {
     setSuggestLoading(true);
     setSuggestError(null);
     setExpandedIdx(null);
+    setSaved({});
     try {
-      const res = await fetch("/api/suggest-theses");
+      const url = refresh ? "/api/suggest-theses?refresh=1" : "/api/suggest-theses";
+      const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
       setSuggestions(data);
@@ -104,6 +134,20 @@ export default function Home() {
     }
   }
 
+  async function saveToWatchlist(i: number, s: ThesisSuggestion) {
+    if (saved[i] === "saved" || saved[i] === "saving") return;
+    setSaved((prev) => ({ ...prev, [i]: "saving" }));
+    try {
+      await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: s.title, thesis_text: s.thesis, catalyst: s.catalyst }),
+      });
+      setSaved((prev) => ({ ...prev, [i]: "saved" }));
+    } catch {
+      setSaved((prev) => ({ ...prev, [i]: "idle" }));
+    }
+  }
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-6 py-16">
@@ -187,7 +231,7 @@ export default function Home() {
           {/* Suggest row */}
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button
-              onClick={fetchSuggestions}
+              onClick={() => fetchSuggestions(false)}
               disabled={suggestLoading}
               className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
@@ -211,7 +255,7 @@ export default function Home() {
 
             {suggestions.length > 0 && !suggestLoading && (
               <button
-                onClick={fetchSuggestions}
+                onClick={() => fetchSuggestions(true)}
                 className="font-mono text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
               >
                 Regenerate
@@ -228,6 +272,7 @@ export default function Home() {
             <div className="mt-4 grid gap-2">
               {suggestions.map((s, i) => {
                 const expanded = expandedIdx === i;
+                const saveState = saved[i] ?? "idle";
                 return (
                   <div
                     key={i}
@@ -240,6 +285,19 @@ export default function Home() {
                     >
                       <span className="flex-1 text-left font-semibold text-white text-sm">
                         {s.title}
+                      </span>
+                      {/* Bookmark — stop propagation so it doesn't toggle expand */}
+                      <span
+                        role="button"
+                        onClick={(e) => { e.stopPropagation(); saveToWatchlist(i, s); }}
+                        title={saveState === "saved" ? "Saved to watchlist" : "Save to watchlist"}
+                        className={`shrink-0 p-1 rounded transition-colors ${
+                          saveState === "saved"
+                            ? "text-amber-400"
+                            : "text-zinc-600 hover:text-zinc-300"
+                        }`}
+                      >
+                        <IconBookmark filled={saveState === "saved"} />
                       </span>
                       <svg
                         className={`w-4 h-4 text-zinc-500 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
@@ -259,13 +317,27 @@ export default function Home() {
                         <span className="self-start inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
                           {s.catalyst}
                         </span>
-                        <button
-                          onClick={() => mapSuggestion(s.thesis)}
-                          disabled={loading}
-                          className="self-start font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {loading ? "Mapping…" : "Map this thesis →"}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => mapSuggestion(s.thesis)}
+                            disabled={loading}
+                            className="font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {loading ? "Mapping…" : "Map this thesis →"}
+                          </button>
+                          <button
+                            onClick={() => saveToWatchlist(i, s)}
+                            disabled={saveState !== "idle"}
+                            className={`font-mono text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors disabled:cursor-not-allowed ${
+                              saveState === "saved"
+                                ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                                : "text-zinc-400 border-zinc-700 hover:text-zinc-200 hover:border-zinc-500"
+                            }`}
+                          >
+                            <IconBookmark filled={saveState === "saved"} className="w-3.5 h-3.5" />
+                            {saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving…" : "Save to watchlist"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -273,7 +345,6 @@ export default function Home() {
               })}
             </div>
           )}
-
         </div>
       </div>
     </main>
