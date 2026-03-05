@@ -171,6 +171,19 @@ export default function Home() {
             className="w-full bg-[#0f0f17] border border-zinc-800 rounded-xl px-5 py-4 text-slate-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-600 text-base leading-relaxed transition-colors"
           />
 
+          {/* Map button */}
+          <div className="mt-3 flex items-center gap-4 flex-wrap">
+            <button
+              onClick={handleMapThesis}
+              disabled={loading || !thesis.trim()}
+              className="px-6 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              {loading ? "Mapping…" : "Map this thesis"}
+            </button>
+            <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+          </div>
+
           {/* Suggest row */}
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button
@@ -223,13 +236,10 @@ export default function Home() {
                     {/* Collapsed header — always visible */}
                     <button
                       onClick={() => setExpandedIdx(expanded ? null : i)}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#12131f] rounded-xl transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#12131f] rounded-xl transition-colors"
                     >
                       <span className="flex-1 text-left font-semibold text-white text-sm">
                         {s.title}
-                      </span>
-                      <span className="font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md shrink-0">
-                        {s.catalyst}
                       </span>
                       <svg
                         className={`w-4 h-4 text-zinc-500 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
@@ -242,14 +252,17 @@ export default function Home() {
 
                     {/* Expanded body */}
                     {expanded && (
-                      <div className="px-4 pb-4">
-                        <p className="text-zinc-400 text-xs leading-relaxed mb-3">
+                      <div className="px-4 pb-4 flex flex-col gap-3">
+                        <p className="text-zinc-400 text-xs leading-relaxed">
                           {s.thesis}
                         </p>
+                        <span className="self-start inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                          {s.catalyst}
+                        </span>
                         <button
                           onClick={() => mapSuggestion(s.thesis)}
                           disabled={loading}
-                          className="font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="self-start font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {loading ? "Mapping…" : "Map this thesis →"}
                         </button>
@@ -261,18 +274,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Map button */}
-          <div className="mt-5 flex items-center gap-4 flex-wrap">
-            <button
-              onClick={handleMapThesis}
-              disabled={loading || !thesis.trim()}
-              className="px-6 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              {loading ? "Mapping…" : "Map this thesis"}
-            </button>
-            <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-          </div>
         </div>
       </div>
     </main>
