@@ -5,24 +5,14 @@ import { generateTitle } from "@/lib/utils";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are an elite macro research analyst specializing in supply chain intelligence and non-obvious investment themes. Your job is to identify emerging investment theses that most retail investors and even many institutional investors are NOT yet focused on.
+// No web search — keeps token usage low and avoids rate limits.
+// The model's training data has deep supply chain / macro knowledge.
+const SYSTEM_PROMPT = `You are an elite macro research analyst specializing in supply chain intelligence. Generate non-obvious, specific investment theses focused on supply chain dynamics — second and third-order effects, not well-known themes.
 
-Rules for thesis generation:
-1. Each thesis must be SPECIFIC and TIMELY — tied to something happening right now (a policy change, supply disruption, capex announcement, regulatory shift, technology inflection)
-2. Each thesis must be NON-OBVIOUS — avoid well-known themes like "AI is growing" or "defense spending is up". Instead, find the second-order and third-order effects that create supply chain opportunities
-3. Each thesis must focus on SUPPLY CHAIN DYNAMICS — who supplies what to whom, where are the bottlenecks, what's under-followed
-4. Each thesis should be DIFFERENT from the user's existing research (provided below) — suggest complementary angles, not overlaps
-5. Think about: emerging regulations, infrastructure bottlenecks, reshoring shifts, material scarcity, technology transitions, demographic shifts with supply chain implications
-6. Each thesis should be 2-3 sentences: state the macro trend, explain why NOW, and hint at the supply chain angle
+Each thesis: 2-3 sentences covering the macro trend, why it matters NOW, and the supply chain angle. Avoid overlap with the user's existing theses.
 
 Return ONLY a JSON array, no markdown, no backticks:
-[
-  {
-    "title": "3-5 word title",
-    "thesis": "Full 2-3 sentence thesis description with specific supply chain angle",
-    "catalyst": "What recent event or trend makes this timely RIGHT NOW"
-  }
-]
+[{"title":"3-5 word title","thesis":"2-3 sentence thesis with supply chain angle","catalyst":"What makes this timely right now"}]
 
 Generate exactly 4 thesis suggestions.`;
 
@@ -46,30 +36,31 @@ export async function GET() {
       : "None yet.";
 
   const today = new Date().toISOString().split("T")[0];
-  const userPrompt = `Current date: ${today}. The user has already mapped these theses:\n${existingList}\n\nSearch for current market developments, recent policy changes, earnings trends, and supply chain disruptions. Then suggest 4 NEW investment theses that complement but don't overlap with the user's existing research. Focus on non-obvious supply chain opportunities.`;
+  const userPrompt = `Current date: ${today}. User's existing theses:\n${existingList}\n\nSuggest 4 NEW supply chain investment theses that complement but don't overlap with the above. Focus on non-obvious, timely opportunities.`;
 
   try {
-    const response = await client.beta.messages.create({
+    const response = await client.messages.create({
       model: "claude-sonnet-4-5-20250929",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
-      betas: ["web-search-2025-03-05"],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    const content = response.content[0];
+    if (content.type !== "text") {
+      return NextResponse.json({ error: "Unexpected response format" }, { status: 500 });
+    }
+
+    // Strip markdown fences if present
+    let text = content.text.trim();
+    if (text.startsWith("```")) {
+      text = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
 
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      return NextResponse.json(
-        { error: "No suggestions in response" },
-        { status: 500 }
-      );
+      console.error("suggest-theses: no JSON array found in:", text.slice(0, 300));
+      return NextResponse.json({ error: "No suggestions in response" }, { status: 500 });
     }
 
     const data = JSON.parse(jsonMatch[0]);
