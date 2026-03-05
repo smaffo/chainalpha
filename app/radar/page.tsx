@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import {
+  DeepDiveModal,
+  CacheEntry,
+  IconSearch,
+  signalScoreColor,
+  convictionScoreColor,
+} from "@/components/DeepDiveModal";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -18,41 +25,6 @@ interface RadarCompany {
   appearances: RadarAppearance[];
   anyBottleneck: boolean;
 }
-
-interface Catalyst {
-  text: string;
-  date: string;
-  sentiment: "positive" | "negative" | "neutral";
-}
-
-interface DeepDiveData {
-  catalysts: Catalyst[];
-  insiderActivity: {
-    buys: number;
-    sells: number;
-    netValue: string;
-    notable: string;
-  };
-  smartMoney: {
-    institutionCount: number;
-    topHolders: string;
-    recentChanges: string;
-  };
-  analystSentiment: {
-    buy: number;
-    hold: number;
-    sell: number;
-    avgPriceTarget: string;
-    currentPrice: string;
-    upside: string;
-  };
-  lastUpdated: string;
-}
-
-type CacheEntry =
-  | { status: "loading" }
-  | { status: "done"; data: DeepDiveData }
-  | { status: "error"; message: string };
 
 // ── Ticker validation ──────────────────────────────────────────────────────
 
@@ -77,75 +49,6 @@ function calcSignalScore(company: RadarCompany): number {
   return crossPts + tierPts + bnPts;
 }
 
-function signalScoreColor(score: number): string {
-  if (score >= 70) return "text-emerald-400";
-  if (score >= 40) return "text-amber-400";
-  return "text-zinc-500";
-}
-
-function convictionScoreColor(score: number): string {
-  if (score >= 60) return "text-emerald-400";
-  if (score >= 40) return "text-amber-400";
-  return "text-red-400";
-}
-
-// ── Conviction Score ───────────────────────────────────────────────────────
-// Starts at Signal Score, adjusted by deep dive data, clamped 0–100.
-
-function calcConvictionScore(signalScore: number, data: DeepDiveData): number {
-  let score = signalScore;
-
-  // Insider activity
-  const { buys, sells, notable } = data.insiderActivity;
-  const notableLower = notable.toLowerCase();
-  if (buys >= 3) {
-    score += 15; // cluster buying
-  } else if (buys > sells) {
-    score += 10; // net buying
-  } else if (sells > buys) {
-    if (notableLower.includes("ceo") || notableLower.includes("cfo")) {
-      score -= 15; // heavy C-suite selling
-    } else {
-      score -= 10; // net selling
-    }
-  }
-
-  // Analyst sentiment
-  const { buy, hold, sell, upside } = data.analystSentiment;
-  const upsideNum = parseFloat(upside.replace(/[^0-9.]/g, "")) || 0;
-  const upsidePct = upside.trimStart().startsWith("-") ? -upsideNum : upsideNum;
-  if (buy > hold + sell && upsidePct > 20) {
-    score += 10;
-  } else if (sell > buy) {
-    score -= 10;
-  }
-
-  // Institutional momentum
-  const changes = data.smartMoney.recentChanges.toLowerCase();
-  if (changes.includes("new position")) {
-    score += 10;
-  } else if (changes.includes("increas") || changes.includes("added")) {
-    score += 5;
-  } else if (
-    changes.includes("trim") ||
-    changes.includes("decreas") ||
-    changes.includes("reduc")
-  ) {
-    score -= 5;
-  }
-
-  // Catalysts
-  const posCount = data.catalysts.filter((c) => c.sentiment === "positive").length;
-  const negCount = data.catalysts.filter((c) => c.sentiment === "negative").length;
-  if (posCount > negCount + 1) {
-    score += 5;
-  } else if (negCount > posCount) {
-    score -= 5;
-  }
-
-  return Math.max(0, Math.min(100, score));
-}
-
 // ── Tier helpers ───────────────────────────────────────────────────────────
 
 const TIER_LABEL = ["T0", "T1", "T2", "T3"] as const;
@@ -164,332 +67,6 @@ const TIER_OPTIONS = [
   { label: "Tier 1+", value: 1 },
   { label: "Tier 2+", value: 2 },
 ] as const;
-
-// ── Icons ──────────────────────────────────────────────────────────────────
-
-function IconSearch() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-  );
-}
-
-function IconX() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
-// ── Skeleton ───────────────────────────────────────────────────────────────
-
-function Skeleton({ className }: { className?: string }) {
-  return (
-    <div className={`bg-zinc-800/60 rounded animate-pulse ${className ?? ""}`} />
-  );
-}
-
-// ── Deep Dive Modal ────────────────────────────────────────────────────────
-
-const SENTIMENT_COLOR = {
-  positive: "text-emerald-400",
-  negative: "text-red-400",
-  neutral: "text-zinc-400",
-};
-
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="font-mono text-[10px] text-zinc-600 uppercase tracking-widest mb-3">
-      {children}
-    </p>
-  );
-}
-
-function ModalBody({ cacheEntry, onRetry }: { cacheEntry: CacheEntry; onRetry: () => void }) {
-  if (cacheEntry.status === "loading") {
-    return (
-      <div className="p-5 space-y-6">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i}>
-            <Skeleton className="h-2.5 w-24 mb-3" />
-            <div className="space-y-2">
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-4/5" />
-              <Skeleton className="h-3 w-3/5" />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (cacheEntry.status === "error") {
-    return (
-      <div className="p-8 text-center space-y-4">
-        <p className="text-zinc-400 text-sm">{cacheEntry.message}</p>
-        <button
-          onClick={onRetry}
-          className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-4 py-1.5 transition-colors"
-        >
-          Try again
-        </button>
-      </div>
-    );
-  }
-
-  const { catalysts, insiderActivity, smartMoney, analystSentiment } =
-    cacheEntry.data;
-  const { buy, hold, sell } = analystSentiment;
-  const total = buy + hold + sell || 1;
-  const upsidePositive = analystSentiment.upside.startsWith("+");
-
-  return (
-    <div className="divide-y divide-[#1a1d28]">
-      {/* Recent Catalysts */}
-      <div className="p-5">
-        <SectionHeader>Recent Catalysts</SectionHeader>
-        <div className="space-y-2.5">
-          {catalysts.map((c, i) => (
-            <div key={i} className="flex items-start justify-between gap-3">
-              <p
-                className={`text-xs leading-relaxed flex-1 ${
-                  SENTIMENT_COLOR[c.sentiment] ?? SENTIMENT_COLOR.neutral
-                }`}
-              >
-                {c.text}
-              </p>
-              <span className="font-mono text-xs text-zinc-600 flex-shrink-0 tabular-nums mt-0.5">
-                {c.date}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Insider Activity */}
-      <div className="p-5">
-        <SectionHeader>Insider Activity — last 90 days</SectionHeader>
-        <div className="flex items-center gap-4 mb-2.5">
-          <span className="font-mono text-sm">
-            <span className="text-emerald-400 font-bold tabular-nums">
-              {insiderActivity.buys}
-            </span>
-            <span className="text-zinc-600"> buys</span>
-          </span>
-          <span className="font-mono text-sm">
-            <span className="text-red-400 font-bold tabular-nums">
-              {insiderActivity.sells}
-            </span>
-            <span className="text-zinc-600"> sells</span>
-          </span>
-          <span className="font-mono text-sm font-bold text-white tabular-nums ml-auto">
-            {insiderActivity.netValue}
-          </span>
-        </div>
-        {insiderActivity.notable && (
-          <p className="font-mono text-xs text-zinc-500">
-            {insiderActivity.notable}
-          </p>
-        )}
-      </div>
-
-      {/* Smart Money */}
-      <div className="p-5">
-        <SectionHeader>Institutional Holders</SectionHeader>
-        <div className="flex items-baseline gap-2 mb-2">
-          <span className="font-mono text-2xl font-bold text-white tabular-nums">
-            {smartMoney.institutionCount.toLocaleString()}
-          </span>
-          <span className="font-mono text-xs text-zinc-600">institutions</span>
-        </div>
-        <p className="font-mono text-xs text-zinc-400 mb-1.5">
-          {smartMoney.topHolders}
-        </p>
-        <p className="font-mono text-xs text-zinc-600">
-          {smartMoney.recentChanges}
-        </p>
-      </div>
-
-      {/* Analyst Sentiment */}
-      <div className="p-5">
-        <SectionHeader>Analyst Ratings</SectionHeader>
-        {/* Bar */}
-        <div className="flex rounded-full overflow-hidden h-2 mb-2">
-          <div
-            className="bg-emerald-500"
-            style={{ width: `${(buy / total) * 100}%` }}
-          />
-          <div
-            className="bg-zinc-700"
-            style={{ width: `${(hold / total) * 100}%` }}
-          />
-          <div
-            className="bg-red-500"
-            style={{ width: `${(sell / total) * 100}%` }}
-          />
-        </div>
-        {/* Labels */}
-        <div className="flex items-center gap-4 mb-3 font-mono text-xs">
-          <span className="text-emerald-400 tabular-nums">{buy} buy</span>
-          <span className="text-zinc-500 tabular-nums">{hold} hold</span>
-          <span className="text-red-400 tabular-nums">{sell} sell</span>
-        </div>
-        {/* Price target */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="font-mono text-xs text-zinc-500">
-            Target{" "}
-            <span className="text-white font-bold">
-              {analystSentiment.avgPriceTarget}
-            </span>
-          </span>
-          <span className="font-mono text-xs text-zinc-600">
-            vs {analystSentiment.currentPrice}
-          </span>
-          <span
-            className={`font-mono text-xs font-bold ${
-              upsidePositive ? "text-emerald-400" : "text-red-400"
-            }`}
-          >
-            {analystSentiment.upside}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface DeepDiveModalProps {
-  ticker: string;
-  name: string;
-  signalScore: number;
-  cacheEntry: CacheEntry;
-  onClose: () => void;
-  onRefresh: () => void;
-}
-
-function DeepDiveModal({
-  ticker,
-  name,
-  signalScore,
-  cacheEntry,
-  onClose,
-  onRefresh,
-}: DeepDiveModalProps) {
-  // Prevent body scroll while open
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, []);
-
-  const convictionData =
-    cacheEntry.status === "done"
-      ? calcConvictionScore(signalScore, cacheEntry.data)
-      : null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.7)" }}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-xl bg-[#0f1118] border border-[#1a1d28] rounded-2xl max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between px-5 py-4 border-b border-[#1a1d28] flex-shrink-0">
-          <div>
-            {cacheEntry.status === "loading" && (
-              <p className="font-mono text-xs text-zinc-500 animate-pulse mb-1">
-                Researching {ticker}…
-              </p>
-            )}
-            <div className="font-mono text-xl font-bold text-emerald-400">
-              {ticker}
-            </div>
-            <div className="text-zinc-500 text-xs mt-0.5">{name}</div>
-            {/* Score line */}
-            <div className="mt-2 font-mono text-xs text-zinc-600 flex items-center gap-1.5">
-              <span>Signal</span>
-              <span className={signalScoreColor(signalScore)}>{signalScore}</span>
-              {convictionData !== null && (() => {
-                const delta = convictionData - signalScore;
-                const arrow = delta > 5 ? "↑" : delta < -5 ? "↓" : "→";
-                const arrowCls =
-                  delta > 5
-                    ? "text-emerald-400"
-                    : delta < -5
-                    ? "text-red-400"
-                    : "text-zinc-600";
-                return (
-                  <>
-                    <span className="text-zinc-800">→</span>
-                    <span>Conviction</span>
-                    <span className={convictionScoreColor(convictionData)}>
-                      {convictionData}
-                    </span>
-                    <span className={arrowCls}>{arrow}</span>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-zinc-600 hover:text-zinc-300 transition-colors p-1 -mr-1 -mt-1 flex-shrink-0"
-          >
-            <IconX />
-          </button>
-        </div>
-
-        {/* Scrollable body */}
-        <div className="overflow-y-auto flex-1">
-          <ModalBody cacheEntry={cacheEntry} onRetry={onRefresh} />
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-[#1a1d28] flex-shrink-0">
-          <span className="font-mono text-xs text-zinc-700">
-            {cacheEntry.status === "done"
-              ? `Last updated: ${cacheEntry.data.lastUpdated}`
-              : "\u00a0"}
-          </span>
-          <button
-            onClick={onRefresh}
-            disabled={cacheEntry.status === "loading"}
-            className="font-mono text-xs text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            Refresh
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
@@ -516,9 +93,7 @@ export default function Radar() {
 
   function fetchDeepDive(ticker: string, name: string) {
     setDeepDiveCache((prev) => ({ ...prev, [ticker]: { status: "loading" } }));
-    fetch(
-      `/api/deep-dive/${encodeURIComponent(ticker)}?name=${encodeURIComponent(name)}`
-    )
+    fetch(`/api/deep-dive/${encodeURIComponent(ticker)}?name=${encodeURIComponent(name)}`)
       .then((r) => r.json())
       .then((data) =>
         setDeepDiveCache((prev) => ({
@@ -780,9 +355,7 @@ export default function Radar() {
                             {TIER_LABEL[a.tier] ?? `T${a.tier}`}
                           </span>
                           {a.bottleneck && (
-                            <span className="text-amber-400 flex-shrink-0">
-                              ⚡
-                            </span>
+                            <span className="text-amber-400 flex-shrink-0">⚡</span>
                           )}
                         </Link>
                       ))}
@@ -804,9 +377,7 @@ export default function Radar() {
                         </span>
                       )}
                       <button
-                        onClick={() =>
-                          handleDeepDive(company.ticker, company.name)
-                        }
+                        onClick={() => handleDeepDive(company.ticker, company.name)}
                         title="Deep Dive"
                         className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-sky-400 transition-colors mt-0.5"
                       >
@@ -824,3 +395,6 @@ export default function Radar() {
     </>
   );
 }
+
+// Re-export for consumers that import score helpers from this page
+export { convictionScoreColor };

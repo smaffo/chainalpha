@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Company, ThesisResult } from "@/lib/types";
 import { Tooltip } from "./Tooltip";
+import { DeepDiveModal, CacheEntry, IconSearch } from "./DeepDiveModal";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,11 @@ const ALPHA_TOOLTIP: Record<string, string> = {
 
 const BOTTLENECK_TOOLTIP =
   "Supply chain bottleneck: This company sits at a critical chokepoint — sole supplier, no viable alternatives, or controls a scarce resource. Disruption here ripples through the entire chain.";
+
+const VALID_TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,9}$/i;
+function isInvestable(ticker: string): boolean {
+  return ticker.toLowerCase() !== "private" && VALID_TICKER.test(ticker);
+}
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 
@@ -283,12 +289,10 @@ function LiveDataPanel({ ticker, entry }: { ticker: string; entry: LiveEntry | u
             <span className="font-mono text-xs text-zinc-700 tabular-nums">{fmtPrice(data.yearHigh)}</span>
           </div>
           <div className="relative h-1 bg-zinc-800 rounded-full">
-            {/* Filled portion — low to current */}
             <div
               className="absolute inset-y-0 left-0 bg-sky-700/60 rounded-full"
               style={{ width: `${pricePct}%` }}
             />
-            {/* Current price dot */}
             <div
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white border-2 border-sky-500 shadow-sm"
               style={{ left: `${pricePct}%` }}
@@ -305,8 +309,12 @@ function LiveDataPanel({ ticker, entry }: { ticker: string; entry: LiveEntry | u
 export function TierGrid({ result }: { result: ThesisResult }) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [liveCache, setLiveCache] = useState<Record<string, LiveEntry>>({});
-  // Ref prevents duplicate in-flight requests even before state updates
   const fetchingRef = useRef<Set<string>>(new Set());
+
+  // Deep dive state
+  const [deepDiveTicker, setDeepDiveTicker] = useState<string | null>(null);
+  const [deepDiveName, setDeepDiveName] = useState("");
+  const [deepDiveCache, setDeepDiveCache] = useState<Record<string, CacheEntry>>({});
 
   async function fetchLiveData(ticker: string) {
     if (fetchingRef.current.has(ticker) || liveCache[ticker]) return;
@@ -336,111 +344,166 @@ export function TierGrid({ result }: { result: ThesisResult }) {
     }
   }
 
+  function fetchDeepDive(ticker: string, name: string) {
+    setDeepDiveCache((prev) => ({ ...prev, [ticker]: { status: "loading" } }));
+    fetch(`/api/deep-dive/${encodeURIComponent(ticker)}?name=${encodeURIComponent(name)}`)
+      .then((r) => r.json())
+      .then((data) =>
+        setDeepDiveCache((prev) => ({
+          ...prev,
+          [ticker]: data.error
+            ? { status: "error", message: data.error }
+            : { status: "done", data },
+        }))
+      )
+      .catch(() =>
+        setDeepDiveCache((prev) => ({
+          ...prev,
+          [ticker]: { status: "error", message: "Request failed" },
+        }))
+      );
+  }
+
+  function handleDeepDive(ticker: string, name: string) {
+    setDeepDiveTicker(ticker);
+    setDeepDiveName(name);
+    if (!deepDiveCache[ticker]) {
+      fetchDeepDive(ticker, name);
+    }
+  }
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-      {TIERS.map((tier) => {
-        const companies = result[tier.key] ?? [];
-        return (
-          <div
-            key={tier.key}
-            className={`border ${tier.border} rounded-2xl p-5 bg-[#0c0c14] flex flex-col`}
-          >
-            {/* Tier header */}
-            <div className="mb-4">
-              <div className={`font-mono text-xs uppercase tracking-widest ${tier.headerText} mb-1`}>
-                {tier.label}
+    <>
+      {/* Deep Dive Modal */}
+      {deepDiveTicker && deepDiveCache[deepDiveTicker] && (
+        <DeepDiveModal
+          ticker={deepDiveTicker}
+          name={deepDiveName}
+          cacheEntry={deepDiveCache[deepDiveTicker]}
+          onClose={() => setDeepDiveTicker(null)}
+          onRefresh={() => fetchDeepDive(deepDiveTicker, deepDiveName)}
+        />
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {TIERS.map((tier) => {
+          const companies = result[tier.key] ?? [];
+          return (
+            <div
+              key={tier.key}
+              className={`border ${tier.border} rounded-2xl p-5 bg-[#0c0c14] flex flex-col`}
+            >
+              {/* Tier header */}
+              <div className="mb-4">
+                <div className={`font-mono text-xs uppercase tracking-widest ${tier.headerText} mb-1`}>
+                  {tier.label}
+                </div>
+                <div className="text-white font-semibold text-sm mb-2">
+                  {tier.sublabel}
+                </div>
+                <Tooltip content={ALPHA_TOOLTIP[tier.alphaLabel]}>
+                  <span className={`inline-block font-mono text-xs px-2.5 py-0.5 rounded-full cursor-default ${tier.badge}`}>
+                    {tier.alphaLabel}
+                  </span>
+                </Tooltip>
               </div>
-              <div className="text-white font-semibold text-sm mb-2">
-                {tier.sublabel}
-              </div>
-              <Tooltip content={ALPHA_TOOLTIP[tier.alphaLabel]}>
-                <span className={`inline-block font-mono text-xs px-2.5 py-0.5 rounded-full cursor-default ${tier.badge}`}>
-                  {tier.alphaLabel}
-                </span>
-              </Tooltip>
-            </div>
 
-            <div className="border-t border-zinc-800/60 mb-3" />
+              <div className="border-t border-zinc-800/60 mb-3" />
 
-            {/* Company cards */}
-            <div className="flex flex-col gap-2 flex-1">
-              {companies.map((company, idx) => {
-                const cardKey = `${tier.key}-${company.ticker}-${idx}`;
-                const isExpanded = expandedCards.has(cardKey);
-                const liveEntry = liveCache[company.ticker];
+              {/* Company cards */}
+              <div className="flex flex-col gap-2 flex-1">
+                {companies.map((company, idx) => {
+                  const cardKey = `${tier.key}-${company.ticker}-${idx}`;
+                  const isExpanded = expandedCards.has(cardKey);
+                  const liveEntry = liveCache[company.ticker];
 
-                return (
-                  <div
-                    key={cardKey}
-                    onClick={() => toggleCard(cardKey, company.ticker)}
-                    className="rounded-lg border border-zinc-800/50 bg-[#0f0f18] p-3 cursor-pointer hover:border-zinc-700/60 transition-colors"
-                  >
-                    {/* Line 1: Ticker + Name + Bottleneck */}
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2 min-w-0">
-                      <span className={`font-mono font-bold text-sm leading-tight flex-shrink-0 ${tier.ticker}`}>
-                        {company.ticker}
-                      </span>
-                      <span className="text-zinc-300 text-xs font-medium leading-tight break-words min-w-0">
-                        {company.name}
-                      </span>
-                      {company.bottleneck && (
-                        <Tooltip content={BOTTLENECK_TOOLTIP}>
-                          <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-orange-950/60 text-orange-400 border border-orange-700/50 leading-none cursor-default">
-                            ⚡ Bottleneck
-                          </span>
-                        </Tooltip>
-                      )}
-                    </div>
-
-                    {/* Line 2: Market cap + Coverage (wrappable) + Chevron (pinned right) */}
-                    <div className="flex items-start gap-2">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 flex-1 min-w-0">
-                        <span className={`font-mono text-xs tabular-nums ${tier.capCollapsed}`}>
-                          {company.marketCap}
+                  return (
+                    <div
+                      key={cardKey}
+                      onClick={() => toggleCard(cardKey, company.ticker)}
+                      className="rounded-lg border border-zinc-800/50 bg-[#0f0f18] p-3 cursor-pointer hover:border-zinc-700/60 transition-colors"
+                    >
+                      {/* Line 1: Ticker + Name + Bottleneck */}
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2 min-w-0">
+                        <span className={`font-mono font-bold text-sm leading-tight flex-shrink-0 ${tier.ticker}`}>
+                          {company.ticker}
                         </span>
-                        <Tooltip content={COVERAGE_TOOLTIP[company.analyst_coverage]}>
-                          <span className={`font-mono text-xs border rounded px-1.5 py-0.5 leading-none cursor-default ${COVERAGE_STYLE[company.analyst_coverage]}`}>
-                            {COVERAGE_SHORT[company.analyst_coverage]}
-                          </span>
-                        </Tooltip>
+                        <span className="text-zinc-300 text-xs font-medium leading-tight break-words min-w-0">
+                          {company.name}
+                        </span>
+                        {company.bottleneck && (
+                          <Tooltip content={BOTTLENECK_TOOLTIP}>
+                            <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-orange-950/60 text-orange-400 border border-orange-700/50 leading-none cursor-default">
+                              ⚡ Bottleneck
+                            </span>
+                          </Tooltip>
+                        )}
                       </div>
-                      <IconChevron
-                        expanded={isExpanded}
-                        className="flex-shrink-0 text-zinc-700 mt-0.5"
-                      />
-                    </div>
 
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-zinc-800/40">
-                        {/* AI-generated content */}
-                        <div className="flex items-baseline gap-2 mb-3">
-                          <span className={`font-mono font-bold text-base tabular-nums ${tier.capExpanded}`}>
+                      {/* Line 2: Market cap + Coverage + Chevron */}
+                      <div className="flex items-start gap-2">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 flex-1 min-w-0">
+                          <span className={`font-mono text-xs tabular-nums ${tier.capCollapsed}`}>
                             {company.marketCap}
                           </span>
-                          <span className="font-mono text-xs text-zinc-600">market cap (AI est.)</span>
+                          <Tooltip content={COVERAGE_TOOLTIP[company.analyst_coverage]}>
+                            <span className={`font-mono text-xs border rounded px-1.5 py-0.5 leading-none cursor-default ${COVERAGE_STYLE[company.analyst_coverage]}`}>
+                              {COVERAGE_SHORT[company.analyst_coverage]}
+                            </span>
+                          </Tooltip>
                         </div>
-                        <p className="text-zinc-500 text-xs leading-relaxed mb-2">
-                          {company.description}
-                        </p>
-                        <p className="text-zinc-600 text-xs leading-relaxed italic mb-3">
-                          {company.chain_reasoning}
-                        </p>
-
-                        {/* Divider before live data */}
-                        <div className="border-t border-zinc-800/40 mb-3" />
-
-                        {/* Live data section */}
-                        <LiveDataPanel ticker={company.ticker} entry={liveEntry} />
+                        <IconChevron
+                          expanded={isExpanded}
+                          className="flex-shrink-0 text-zinc-700 mt-0.5"
+                        />
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+
+                      {/* Expanded detail */}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-zinc-800/40">
+                          {/* AI-generated content */}
+                          <div className="flex items-baseline gap-2 mb-3">
+                            <span className={`font-mono font-bold text-base tabular-nums ${tier.capExpanded}`}>
+                              {company.marketCap}
+                            </span>
+                            <span className="font-mono text-xs text-zinc-600">market cap (AI est.)</span>
+                          </div>
+                          <p className="text-zinc-500 text-xs leading-relaxed mb-2">
+                            {company.description}
+                          </p>
+                          <p className="text-zinc-600 text-xs leading-relaxed italic mb-3">
+                            {company.chain_reasoning}
+                          </p>
+
+                          {/* Deep Dive button */}
+                          {isInvestable(company.ticker) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeepDive(company.ticker, company.name);
+                              }}
+                              className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-sky-400 transition-colors mb-3"
+                            >
+                              <IconSearch />
+                              <span>Deep Dive</span>
+                            </button>
+                          )}
+
+                          {/* Divider before live data */}
+                          <div className="border-t border-zinc-800/40 mb-3" />
+
+                          {/* Live data section */}
+                          <LiveDataPanel ticker={company.ticker} entry={liveEntry} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
