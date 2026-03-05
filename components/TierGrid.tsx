@@ -373,7 +373,7 @@ export function TierGrid({ result }: { result: ThesisResult }) {
                   <div
                     key={cardKey}
                     onClick={() => toggleCard(cardKey, company.ticker)}
-                    className="rounded-lg border border-zinc-800/50 bg-[#0f0f18] p-3 cursor-pointer hover:border-zinc-700/60 transition-colors overflow-hidden"
+                    className="rounded-lg border border-zinc-800/50 bg-[#0f0f18] p-3 cursor-pointer hover:border-zinc-700/60 transition-colors"
                   >
                     {/* Line 1: Ticker + Name + Bottleneck */}
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2 min-w-0">
