@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SavedThesis } from "@/lib/types";
 
@@ -19,8 +19,6 @@ const SUGGESTION_BORDERS = [
 
 export default function Home() {
   const router = useRouter();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
   const [thesis, setThesis] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +31,7 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<ThesisSuggestion[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/theses")
@@ -71,6 +70,7 @@ export default function Home() {
   async function fetchSuggestions() {
     setSuggestLoading(true);
     setSuggestError(null);
+    setExpandedIdx(null);
     try {
       const res = await fetch("/api/suggest-theses");
       const data = await res.json();
@@ -85,11 +85,25 @@ export default function Home() {
     }
   }
 
-  function fillThesis(text: string) {
+  async function mapSuggestion(text: string) {
     setThesis(text);
-    textareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    textareaRef.current?.focus();
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/map-thesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thesis: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      router.push(`/research/${data.thesisId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setLoading(false);
+    }
   }
+
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-6 py-16">
@@ -146,7 +160,6 @@ export default function Home() {
             Your Thesis
           </label>
           <textarea
-            ref={textareaRef}
             value={thesis}
             onChange={(e) => setThesis(e.target.value)}
             onKeyDown={(e) => {
@@ -199,24 +212,52 @@ export default function Home() {
 
           {/* Suggestion cards */}
           {!suggestLoading && suggestions.length > 0 && (
-            <div className="mt-4 grid gap-3">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => fillThesis(s.thesis)}
-                  className={`text-left p-4 rounded-xl bg-[#0f1118] border border-zinc-800/60 border-l-2 ${SUGGESTION_BORDERS[i % 4]} hover:bg-[#12131f] transition-colors w-full`}
-                >
-                  <p className="font-semibold text-white text-sm mb-1.5">
-                    {s.title}
-                  </p>
-                  <p className="text-zinc-400 text-xs leading-relaxed mb-3">
-                    {s.thesis}
-                  </p>
-                  <span className="inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
-                    {s.catalyst}
-                  </span>
-                </button>
-              ))}
+            <div className="mt-4 grid gap-2">
+              {suggestions.map((s, i) => {
+                const expanded = expandedIdx === i;
+                return (
+                  <div
+                    key={i}
+                    className={`rounded-xl bg-[#0f1118] border border-zinc-800/60 border-l-2 ${SUGGESTION_BORDERS[i % 4]} transition-colors`}
+                  >
+                    {/* Collapsed header — always visible */}
+                    <button
+                      onClick={() => setExpandedIdx(expanded ? null : i)}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#12131f] rounded-xl transition-colors"
+                    >
+                      <span className="flex-1 text-left font-semibold text-white text-sm">
+                        {s.title}
+                      </span>
+                      <span className="font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md shrink-0">
+                        {s.catalyst}
+                      </span>
+                      <svg
+                        className={`w-4 h-4 text-zinc-500 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+                        fill="none" stroke="currentColor" strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* Expanded body */}
+                    {expanded && (
+                      <div className="px-4 pb-4">
+                        <p className="text-zinc-400 text-xs leading-relaxed mb-3">
+                          {s.thesis}
+                        </p>
+                        <button
+                          onClick={() => mapSuggestion(s.thesis)}
+                          disabled={loading}
+                          className="font-mono text-xs text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {loading ? "Mapping…" : "Map this thesis →"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
