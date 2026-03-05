@@ -1,56 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Company, ThesisResult } from "@/lib/types";
 import { Tooltip } from "./Tooltip";
 import { DeepDiveModal, CacheEntry, IconSearch } from "./DeepDiveModal";
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface LiveData {
-  price: number | null;
-  change: number | null;
-  changePercent: number | null;
-  volume: number | null;
-  marketCap: number | null;
-  pe: number | null;
-  yearHigh: number | null;
-  yearLow: number | null;
-  sector: string | null;
-  industry: string | null;
-  website: string | null;
-  employees: number | null;
-}
-
-type LiveEntry =
-  | { status: "loading" }
-  | { status: "success"; data: LiveData }
-  | { status: "error" };
-
-// ── Formatters ─────────────────────────────────────────────────────────────
-
-function fmtPrice(n: number | null): string {
-  if (n == null) return "—";
-  return n >= 1000
-    ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : `$${n.toFixed(2)}`;
-}
-
-function fmtLiveCap(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
-  return `$${(n / 1e3).toFixed(0)}K`;
-}
-
-function fmtVolume(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
-  return `${n}`;
-}
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -64,8 +17,7 @@ const TIERS = [
     headerText: "text-zinc-400",
     badge: "bg-zinc-800/80 text-zinc-400 border border-zinc-700",
     ticker: "text-zinc-300",
-    capCollapsed: "text-zinc-600",
-    capExpanded: "text-zinc-400",
+    cap: "text-zinc-600",
   },
   {
     key: "tier1" as keyof ThesisResult,
@@ -76,8 +28,7 @@ const TIERS = [
     headerText: "text-amber-400",
     badge: "bg-amber-950/60 text-amber-400 border border-amber-500/40",
     ticker: "text-amber-300",
-    capCollapsed: "text-amber-700",
-    capExpanded: "text-amber-400",
+    cap: "text-amber-700",
   },
   {
     key: "tier2" as keyof ThesisResult,
@@ -88,8 +39,7 @@ const TIERS = [
     headerText: "text-emerald-400",
     badge: "bg-emerald-950/60 text-emerald-400 border border-emerald-500/40",
     ticker: "text-emerald-300",
-    capCollapsed: "text-emerald-800",
-    capExpanded: "text-emerald-400",
+    cap: "text-emerald-800",
   },
   {
     key: "tier3" as keyof ThesisResult,
@@ -100,8 +50,7 @@ const TIERS = [
     headerText: "text-purple-400",
     badge: "bg-purple-950/60 text-purple-400 border border-purple-500/40",
     ticker: "text-purple-300",
-    capCollapsed: "text-purple-800",
-    capExpanded: "text-purple-400",
+    cap: "text-purple-800",
   },
 ] as const;
 
@@ -171,177 +120,22 @@ function IconExternalLink({ className }: { className?: string }) {
   );
 }
 
-// ── Live Data Panel ────────────────────────────────────────────────────────
-
-function LiveDataPanel({ ticker, entry }: { ticker: string; entry: LiveEntry | undefined }) {
-  if (!entry || entry.status === "loading") {
-    return (
-      <div className="flex items-center gap-2 py-2">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="w-1.5 h-1.5 rounded-full bg-zinc-700 animate-pulse"
-            style={{ animationDelay: `${i * 180}ms` }}
-          />
-        ))}
-        <span className="font-mono text-xs text-zinc-700">Fetching live data…</span>
-      </div>
-    );
-  }
-
-  if (entry.status === "error") {
-    return (
-      <p className="font-mono text-xs text-zinc-700 italic py-1">
-        Live data unavailable for {ticker}
-      </p>
-    );
-  }
-
-  const { data } = entry;
-  const changePos = (data.change ?? 0) >= 0;
-  const pricePct =
-    data.yearLow != null && data.yearHigh != null && data.price != null
-      ? Math.max(0, Math.min(100, ((data.price - data.yearLow) / (data.yearHigh - data.yearLow)) * 100))
-      : null;
-
-  return (
-    <div className="rounded-lg bg-[#080c14] border border-sky-900/30 p-3">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-mono text-xs text-sky-500/70 uppercase tracking-widest">
-          Live Data
-        </span>
-        <a
-          href={`https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-        >
-          Yahoo Finance
-          <IconExternalLink />
-        </a>
-      </div>
-
-      {/* Price + change */}
-      {data.price != null && (
-        <div className="flex items-baseline gap-2 mb-3">
-          <span className="font-mono font-bold text-lg tabular-nums text-white">
-            {fmtPrice(data.price)}
-          </span>
-          {data.change != null && (
-            <span className={`font-mono text-xs tabular-nums ${changePos ? "text-emerald-400" : "text-red-400"}`}>
-              {changePos ? "+" : ""}{data.change.toFixed(2)}
-              {data.changePercent != null && (
-                <> ({changePos ? "+" : ""}{data.changePercent.toFixed(2)}%)</>
-              )}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Key metrics grid */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3">
-        <div>
-          <p className="font-mono text-xs text-zinc-600 mb-0.5">Market Cap</p>
-          <p className="font-mono text-xs text-zinc-300 tabular-nums">{fmtLiveCap(data.marketCap)}</p>
-        </div>
-        {data.pe != null && (
-          <div>
-            <p className="font-mono text-xs text-zinc-600 mb-0.5">P/E Ratio</p>
-            <p className="font-mono text-xs text-zinc-300 tabular-nums">{data.pe.toFixed(1)}×</p>
-          </div>
-        )}
-        {data.volume != null && (
-          <div>
-            <p className="font-mono text-xs text-zinc-600 mb-0.5">Volume</p>
-            <p className="font-mono text-xs text-zinc-300 tabular-nums">{fmtVolume(data.volume)}</p>
-          </div>
-        )}
-        {data.employees != null && (
-          <div>
-            <p className="font-mono text-xs text-zinc-600 mb-0.5">Employees</p>
-            <p className="font-mono text-xs text-zinc-300 tabular-nums">
-              {data.employees.toLocaleString()}
-            </p>
-          </div>
-        )}
-        {data.sector && (
-          <div>
-            <p className="font-mono text-xs text-zinc-600 mb-0.5">Sector</p>
-            <p className="font-mono text-xs text-zinc-300">{data.sector}</p>
-          </div>
-        )}
-        {data.industry && (
-          <div>
-            <p className="font-mono text-xs text-zinc-600 mb-0.5">Industry</p>
-            <p className="font-mono text-xs text-zinc-300">{data.industry}</p>
-          </div>
-        )}
-      </div>
-
-      {/* 52-week range bar */}
-      {pricePct !== null && data.yearLow != null && data.yearHigh != null && (
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="font-mono text-xs text-zinc-700 tabular-nums">{fmtPrice(data.yearLow)}</span>
-            <span className="font-mono text-xs text-zinc-700 uppercase tracking-widest" style={{ fontSize: "9px" }}>52-Week Range</span>
-            <span className="font-mono text-xs text-zinc-700 tabular-nums">{fmtPrice(data.yearHigh)}</span>
-          </div>
-          <div className="relative h-1 bg-zinc-800 rounded-full">
-            <div
-              className="absolute inset-y-0 left-0 bg-sky-700/60 rounded-full"
-              style={{ width: `${pricePct}%` }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white border-2 border-sky-500 shadow-sm"
-              style={{ left: `${pricePct}%` }}
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function TierGrid({ result }: { result: ThesisResult }) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [liveCache, setLiveCache] = useState<Record<string, LiveEntry>>({});
-  const fetchingRef = useRef<Set<string>>(new Set());
 
   // Deep dive state
   const [deepDiveTicker, setDeepDiveTicker] = useState<string | null>(null);
   const [deepDiveName, setDeepDiveName] = useState("");
   const [deepDiveCache, setDeepDiveCache] = useState<Record<string, CacheEntry>>({});
 
-  async function fetchLiveData(ticker: string) {
-    if (fetchingRef.current.has(ticker) || liveCache[ticker]) return;
-    fetchingRef.current.add(ticker);
-    setLiveCache((prev) => ({ ...prev, [ticker]: { status: "loading" } }));
-
-    try {
-      const res = await fetch(`/api/company/${encodeURIComponent(ticker)}`);
-      const entry: LiveEntry = res.ok
-        ? { status: "success", data: await res.json() }
-        : { status: "error" };
-      setLiveCache((prev) => ({ ...prev, [ticker]: entry }));
-    } catch {
-      setLiveCache((prev) => ({ ...prev, [ticker]: { status: "error" } }));
-    }
-  }
-
-  function toggleCard(key: string, ticker: string) {
-    const isCurrentlyOpen = expandedCards.has(key);
+  function toggleCard(key: string) {
     setExpandedCards((prev) => {
       const next = new Set(prev);
-      isCurrentlyOpen ? next.delete(key) : next.add(key);
+      prev.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-    if (!isCurrentlyOpen) {
-      fetchLiveData(ticker);
-    }
   }
 
   function fetchDeepDive(ticker: string, name: string) {
@@ -415,12 +209,11 @@ export function TierGrid({ result }: { result: ThesisResult }) {
                 {companies.map((company, idx) => {
                   const cardKey = `${tier.key}-${company.ticker}-${idx}`;
                   const isExpanded = expandedCards.has(cardKey);
-                  const liveEntry = liveCache[company.ticker];
 
                   return (
                     <div
                       key={cardKey}
-                      onClick={() => toggleCard(cardKey, company.ticker)}
+                      onClick={() => toggleCard(cardKey)}
                       className="rounded-lg border border-zinc-800/50 bg-[#0f0f18] p-3 cursor-pointer hover:border-zinc-700/60 transition-colors"
                     >
                       {/* Line 1: Ticker + Name + Bottleneck */}
@@ -443,7 +236,7 @@ export function TierGrid({ result }: { result: ThesisResult }) {
                       {/* Line 2: Market cap + Coverage + Chevron */}
                       <div className="flex items-start gap-2">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 flex-1 min-w-0">
-                          <span className={`font-mono text-xs tabular-nums ${tier.capCollapsed}`}>
+                          <span className={`font-mono text-xs tabular-nums ${tier.cap}`}>
                             {company.marketCap}
                           </span>
                           <Tooltip content={COVERAGE_TOOLTIP[company.analyst_coverage]}>
@@ -460,40 +253,41 @@ export function TierGrid({ result }: { result: ThesisResult }) {
 
                       {/* Expanded detail */}
                       {isExpanded && (
-                        <div className="mt-3 pt-3 border-t border-zinc-800/40">
-                          {/* AI-generated content */}
-                          <div className="flex items-baseline gap-2 mb-3">
-                            <span className={`font-mono font-bold text-base tabular-nums ${tier.capExpanded}`}>
-                              {company.marketCap}
-                            </span>
-                            <span className="font-mono text-xs text-zinc-600">market cap (AI est.)</span>
-                          </div>
-                          <p className="text-zinc-500 text-xs leading-relaxed mb-2">
+                        <div className="mt-3 pt-3 border-t border-zinc-800/40 space-y-2">
+                          <p className="text-zinc-500 text-xs leading-relaxed">
                             {company.description}
                           </p>
-                          <p className="text-zinc-600 text-xs leading-relaxed italic mb-3">
+                          <p className="text-zinc-600 text-xs leading-relaxed italic">
                             {company.chain_reasoning}
                           </p>
 
-                          {/* Deep Dive button */}
-                          {isInvestable(company.ticker) && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeepDive(company.ticker, company.name);
-                              }}
-                              className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-sky-400 transition-colors mb-3"
-                            >
-                              <IconSearch />
-                              <span>Deep Dive</span>
-                            </button>
-                          )}
-
-                          {/* Divider before live data */}
-                          <div className="border-t border-zinc-800/40 mb-3" />
-
-                          {/* Live data section */}
-                          <LiveDataPanel ticker={company.ticker} entry={liveEntry} />
+                          {/* Actions row: Deep Dive + Yahoo Finance */}
+                          <div className="flex items-center gap-4 pt-1">
+                            {isInvestable(company.ticker) && (
+                              <>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeepDive(company.ticker, company.name);
+                                  }}
+                                  className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-sky-400 transition-colors"
+                                >
+                                  <IconSearch />
+                                  <span>Deep Dive</span>
+                                </button>
+                                <a
+                                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(company.ticker)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+                                >
+                                  <span>Yahoo Finance</span>
+                                  <IconExternalLink />
+                                </a>
+                              </>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
