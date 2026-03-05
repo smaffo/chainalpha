@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+
+// ── Deep dive loading messages ───────────────────────────────────────────────
+
+const DIVE_MESSAGES = [
+  "Scanning recent news and catalysts...",
+  "Checking insider trading activity...",
+  "Analyzing institutional holders...",
+  "Gathering analyst ratings...",
+  "Compiling research...",
+];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -137,11 +147,39 @@ function IconX() {
   );
 }
 
-// ── Skeleton ────────────────────────────────────────────────────────────────
+// ── Deep dive loading body ───────────────────────────────────────────────────
 
-function Skeleton({ className }: { className?: string }) {
+function ModalLoadingBody() {
+  const [msgIdx, setMsgIdx] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(Date.now());
+
+  useEffect(() => {
+    startRef.current = Date.now();
+    const msgTimer = setInterval(
+      () => setMsgIdx((i) => Math.min(i + 1, DIVE_MESSAGES.length - 1)),
+      5_000
+    );
+    const elapsedTimer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)),
+      1_000
+    );
+    return () => {
+      clearInterval(msgTimer);
+      clearInterval(elapsedTimer);
+    };
+  }, []);
+
   return (
-    <div className={`bg-zinc-800/60 rounded animate-pulse ${className ?? ""}`} />
+    <div className="p-5 flex flex-col gap-4" style={{ minHeight: "320px" }}>
+      <div className="flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+        <span className="font-mono text-xs text-zinc-400 transition-all duration-300">
+          {DIVE_MESSAGES[msgIdx]}
+        </span>
+      </div>
+      <span className="font-mono text-xs text-zinc-700 tabular-nums">{elapsed}s</span>
+    </div>
   );
 }
 
@@ -163,20 +201,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 function ModalBody({ cacheEntry, onRetry }: { cacheEntry: CacheEntry; onRetry: () => void }) {
   if (cacheEntry.status === "loading") {
-    return (
-      <div className="p-5 space-y-6">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i}>
-            <Skeleton className="h-2.5 w-24 mb-3" />
-            <div className="space-y-2">
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-4/5" />
-              <Skeleton className="h-3 w-3/5" />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
+    return <ModalLoadingBody />;
   }
 
   if (cacheEntry.status === "error") {

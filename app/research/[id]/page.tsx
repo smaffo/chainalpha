@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ThesisResult } from "@/lib/types";
 import { TierGrid } from "@/components/TierGrid";
+import { MappingProgress } from "@/components/MappingProgress";
 import { formatDate, generateTitle } from "@/lib/utils";
 
 // ── Market cap parsing ─────────────────────────────────────────────────────
@@ -295,19 +296,8 @@ export default function ResearchView({
 
         {/* Remapping */}
         {remapping && (
-          <div className="flex flex-col items-center justify-center py-24 gap-5">
-            <div className="flex gap-1.5">
-              {[0, 1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className="w-1.5 h-6 rounded-full bg-zinc-700 animate-pulse"
-                  style={{ animationDelay: `${i * 150}ms` }}
-                />
-              ))}
-            </div>
-            <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
-              Mapping supply chain…
-            </p>
+          <div className="py-12 max-w-sm">
+            <MappingProgress />
           </div>
         )}
 

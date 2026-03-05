@@ -1,14 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SavedThesis } from "@/lib/types";
-
-const MAP_MESSAGES = [
-  "Analyzing supply chains…",
-  "Identifying bottlenecks…",
-  "Almost there…",
-];
+import { MappingProgress } from "@/components/MappingProgress";
 
 interface ThesisSuggestion {
   title: string;
@@ -56,9 +51,6 @@ export default function Home() {
     companies: number;
     bottlenecks: number;
   } | null>(null);
-
-  const [mapMsgIdx, setMapMsgIdx] = useState(0);
-  const mapMsgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [suggestions, setSuggestions] = useState<ThesisSuggestion[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -113,19 +105,6 @@ export default function Home() {
       }
     });
   }, []);
-
-  // Rotate loading message every 15 s while mapping
-  useEffect(() => {
-    if (loading) {
-      setMapMsgIdx(0);
-      mapMsgTimer.current = setInterval(() => {
-        setMapMsgIdx((i) => Math.min(i + 1, MAP_MESSAGES.length - 1));
-      }, 15_000);
-    } else {
-      if (mapMsgTimer.current) clearInterval(mapMsgTimer.current);
-    }
-    return () => { if (mapMsgTimer.current) clearInterval(mapMsgTimer.current); };
-  }, [loading]);
 
   async function handleMapThesis() {
     const text = thesis.trim();
@@ -277,33 +256,32 @@ export default function Home() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleMapThesis();
             }}
+            disabled={loading}
             placeholder="Describe a macro theme, sector trend, or structural shift..."
             rows={4}
-            className="w-full bg-[#0f0f17] border border-zinc-800 rounded-xl px-5 py-4 text-slate-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-600 text-base leading-relaxed transition-colors"
+            className="w-full bg-[#0f0f17] border border-zinc-800 rounded-xl px-5 py-4 text-slate-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-600 text-base leading-relaxed transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           />
 
-          {/* Map button */}
-          <div className="mt-3 flex items-center gap-4 flex-wrap">
-            <button
-              onClick={handleMapThesis}
-              disabled={loading || !thesis.trim()}
-              className="px-6 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              {loading ? MAP_MESSAGES[mapMsgIdx] : "Map this thesis"}
-            </button>
-            {!loading && <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>}
-            {error && (
-              <div className="flex items-center gap-3">
-                <p className="text-red-400 text-sm">{error}</p>
-                <button
-                  onClick={handleMapThesis}
-                  className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-3 py-1 transition-colors"
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-          </div>
+          {/* Map button / loading progress */}
+          {loading || error ? (
+            <div className="mt-3">
+              <MappingProgress
+                error={error}
+                onRetry={() => { setError(null); handleMapThesis(); }}
+              />
+            </div>
+          ) : (
+            <div className="mt-3 flex items-center gap-4 flex-wrap">
+              <button
+                onClick={handleMapThesis}
+                disabled={!thesis.trim()}
+                className="px-6 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                Map this thesis
+              </button>
+              <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>
+            </div>
+          )}
 
           {/* Suggest row */}
           <div className="mt-3 flex items-center gap-3 flex-wrap">
