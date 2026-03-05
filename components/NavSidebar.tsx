@@ -121,17 +121,17 @@ export function NavSidebar() {
       active: pathname.startsWith("/radar"),
     },
     {
-      href: "/watchlist",
-      icon: IconBookmark,
-      label: "Watchlist",
-      active: pathname.startsWith("/watchlist"),
-    },
-    {
       href: "/library",
       icon: IconLibrary,
       label: "Library",
       active:
         pathname.startsWith("/library") || pathname.startsWith("/research"),
+    },
+    {
+      href: "/watchlist",
+      icon: IconBookmark,
+      label: "Watchlist",
+      active: pathname.startsWith("/watchlist"),
     },
   ];
 
