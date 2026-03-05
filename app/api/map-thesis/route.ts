@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -75,41 +75,56 @@ type ThesisResult = {
 const TIER_KEYS = ["tier0", "tier1", "tier2", "tier3"] as const;
 const TIER_NUM: Record<string, number> = { tier0: 0, tier1: 1, tier2: 2, tier3: 3 };
 
-function persistResult(
+async function persistResult(
   thesisText: string,
   result: ThesisResult,
   title: string,
   existingThesisId?: number
-): number {
-  const db = getDb();
+): Promise<number> {
   let thesisId: number;
 
   if (existingThesisId) {
-    db.prepare(`UPDATE theses SET last_mapped_at = datetime('now'), title = ? WHERE id = ?`).run(title, existingThesisId);
-    db.prepare(`DELETE FROM chain_results WHERE thesis_id = ?`).run(existingThesisId);
+    await supabase
+      .from("theses")
+      .update({ last_mapped_at: new Date().toISOString(), title })
+      .eq("id", existingThesisId);
+    await supabase
+      .from("chain_results")
+      .delete()
+      .eq("thesis_id", existingThesisId);
     thesisId = existingThesisId;
   } else {
-    const info = db.prepare(`INSERT INTO theses (thesis_text, title) VALUES (?, ?)`).run(thesisText, title);
-    thesisId = info.lastInsertRowid as number;
+    const { data, error } = await supabase
+      .from("theses")
+      .insert({ thesis_text: thesisText, title })
+      .select("id")
+      .single();
+    if (error || !data) throw error ?? new Error("Failed to insert thesis");
+    thesisId = data.id;
   }
 
-  const insertCompany = db.prepare(`
-    INSERT INTO chain_results
-      (thesis_id, tier, company_name, ticker, market_cap, description,
-       chain_reasoning, bottleneck, analyst_coverage, alpha_score)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertAll = db.transaction((res: ThesisResult) => {
-    for (const key of TIER_KEYS) {
-      for (const c of res[key] ?? []) {
-        insertCompany.run(thesisId, TIER_NUM[key], c.name, c.ticker, c.marketCap,
-          c.description, c.chain_reasoning, c.bottleneck ? 1 : 0, c.analyst_coverage, c.alphaScore);
-      }
+  const rows = [];
+  for (const key of TIER_KEYS) {
+    for (const c of result[key] ?? []) {
+      rows.push({
+        thesis_id: thesisId,
+        tier: TIER_NUM[key],
+        company_name: c.name,
+        ticker: c.ticker,
+        market_cap: c.marketCap,
+        description: c.description,
+        chain_reasoning: c.chain_reasoning,
+        bottleneck: c.bottleneck,
+        analyst_coverage: c.analyst_coverage,
+        alpha_score: c.alphaScore,
+      });
     }
-  });
+  }
 
-  insertAll(result);
+  if (rows.length > 0) {
+    await supabase.from("chain_results").insert(rows);
+  }
+
   return thesisId;
 }
 
@@ -172,7 +187,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { title = "", ...result } = parsed as { title: string } & ThesisResult;
-    const savedThesisId = persistResult(thesis.trim(), result, title, thesisId);
+    const savedThesisId = await persistResult(thesis.trim(), result, title, thesisId);
 
     return NextResponse.json({ result, thesisId: savedThesisId, title });
   } catch (err) {

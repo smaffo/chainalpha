@@ -1,41 +1,28 @@
 import { NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { generateTitle } from "@/lib/utils";
 
 export async function GET() {
-  const db = getDb();
+  const { data: allRows, error } = await supabase
+    .from("chain_results")
+    .select("ticker, company_name, tier, bottleneck, thesis_id, theses(title, thesis_text)")
+    .neq("ticker", "");
 
-  const rows = db
-    .prepare(
-      `WITH cross_tickers AS (
-         SELECT ticker
-         FROM chain_results
-         WHERE ticker != ''
-         GROUP BY ticker
-         HAVING COUNT(DISTINCT thesis_id) > 1
-       )
-       SELECT
-         cr.ticker,
-         cr.company_name,
-         cr.tier,
-         cr.bottleneck,
-         cr.thesis_id,
-         t.title,
-         t.thesis_text
-       FROM chain_results cr
-       JOIN cross_tickers ct ON ct.ticker = cr.ticker
-       JOIN theses t ON t.id = cr.thesis_id
-       ORDER BY cr.ticker, cr.thesis_id`
-    )
-    .all() as Array<{
-    ticker: string;
-    company_name: string;
-    tier: number;
-    bottleneck: number;
-    thesis_id: number;
-    title: string;
-    thesis_text: string;
-  }>;
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Find tickers that appear in more than one thesis
+  const tickerTheses = new Map<string, Set<number>>();
+  for (const row of allRows ?? []) {
+    if (!tickerTheses.has(row.ticker)) tickerTheses.set(row.ticker, new Set());
+    tickerTheses.get(row.ticker)!.add(row.thesis_id);
+  }
+  const crossTickers = new Set(
+    [...tickerTheses.entries()]
+      .filter(([, theses]) => theses.size > 1)
+      .map(([ticker]) => ticker)
+  );
 
   const map = new Map<
     string,
@@ -52,7 +39,9 @@ export async function GET() {
     }
   >();
 
-  for (const row of rows) {
+  for (const row of allRows ?? []) {
+    if (!crossTickers.has(row.ticker)) continue;
+
     if (!map.has(row.ticker)) {
       map.set(row.ticker, {
         ticker: row.ticker,
@@ -61,9 +50,12 @@ export async function GET() {
         anyBottleneck: false,
       });
     }
+
     const entry = map.get(row.ticker)!;
-    const thesisTitle = row.title || generateTitle(row.thesis_text);
-    const isBottleneck = row.bottleneck === 1;
+    const thesis = row.theses as unknown as { title: string; thesis_text: string } | null;
+    const thesisTitle = thesis?.title || generateTitle(thesis?.thesis_text ?? "");
+    const isBottleneck = row.bottleneck === true;
+
     entry.appearances.push({
       thesisId: row.thesis_id,
       title: thesisTitle,

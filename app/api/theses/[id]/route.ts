@@ -1,23 +1,18 @@
 import { NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const thesis = db.prepare("SELECT * FROM theses WHERE id = ?").get(id) as
-    | {
-        id: number;
-        thesis_text: string;
-        title: string;
-        created_at: string;
-        last_mapped_at: string;
-      }
-    | undefined;
+  const { data: thesis, error } = await supabase
+    .from("theses")
+    .select("*")
+    .eq("id", Number(id))
+    .single();
 
-  if (!thesis) {
+  if (error || !thesis) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   return NextResponse.json(thesis);
@@ -28,7 +23,6 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.prepare("DELETE FROM theses WHERE id = ?").run(id);
+  await supabase.from("theses").delete().eq("id", Number(id));
   return NextResponse.json({ ok: true });
 }

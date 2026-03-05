@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  db.prepare(`DELETE FROM watchlist WHERE id = ?`).run(Number(id));
+  await supabase.from("watchlist").delete().eq("id", Number(id));
   return NextResponse.json({ ok: true });
 }

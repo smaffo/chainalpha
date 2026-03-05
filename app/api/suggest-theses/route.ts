@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { generateTitle } from "@/lib/utils";
 
 const client = new Anthropic({
@@ -18,8 +18,6 @@ Return ONLY a JSON array, no markdown, no backticks:
 [{"title":"3-5 word title","thesis":"2-3 sentence thesis with supply chain angle","catalyst":"What makes this timely right now"}]
 
 Generate exactly 4 thesis suggestions.`;
-
-type SuggestedThesis = { id: number; title: string; thesis_text: string; catalyst: string };
 
 function parseJsonResponse(text: string): unknown {
   let cleaned = text.trim();
@@ -50,15 +48,15 @@ function apiErrorMessage(err: unknown): string | null {
 }
 
 async function generateAndCache(): Promise<NextResponse> {
-  const db = getDb();
-
-  const rows = db
-    .prepare(`SELECT title, thesis_text FROM theses ORDER BY last_mapped_at DESC LIMIT 10`)
-    .all() as Array<{ title: string; thesis_text: string }>;
+  const { data: rows } = await supabase
+    .from("theses")
+    .select("title, thesis_text")
+    .order("last_mapped_at", { ascending: false })
+    .limit(10);
 
   const existingList =
-    rows.length > 0
-      ? rows.map((t) => `- ${t.title || generateTitle(t.thesis_text)}`).join("\n")
+    (rows ?? []).length > 0
+      ? (rows ?? []).map((t) => `- ${t.title || generateTitle(t.thesis_text)}`).join("\n")
       : "None yet.";
 
   const today = new Date().toISOString().split("T")[0];
@@ -86,10 +84,11 @@ async function generateAndCache(): Promise<NextResponse> {
 
   const data = parsed as Array<{ title: string; thesis: string; catalyst: string }>;
 
-  // Replace cache
-  db.prepare(`DELETE FROM suggested_theses`).run();
-  const insert = db.prepare(`INSERT INTO suggested_theses (title, thesis_text, catalyst) VALUES (?, ?, ?)`);
-  for (const s of data) insert.run(s.title, s.thesis, s.catalyst);
+  // Replace cache — delete all then re-insert
+  await supabase.from("suggested_theses").delete().gte("id", 1);
+  await supabase.from("suggested_theses").insert(
+    data.map((s) => ({ title: s.title, thesis_text: s.thesis, catalyst: s.catalyst }))
+  );
 
   return NextResponse.json(data.map((s) => ({ title: s.title, thesis: s.thesis, catalyst: s.catalyst })));
 }
@@ -100,15 +99,19 @@ export async function GET(req: NextRequest) {
   }
 
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
-  const db = getDb();
 
   if (!refresh) {
-    const cached = db
-      .prepare(`SELECT id, title, thesis_text, catalyst FROM suggested_theses WHERE created_at > datetime('now', '-24 hours') ORDER BY id ASC`)
-      .all() as SuggestedThesis[];
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: cached } = await supabase
+      .from("suggested_theses")
+      .select("title, thesis_text, catalyst")
+      .gte("created_at", cutoff)
+      .order("id");
 
-    if (cached.length > 0) {
-      return NextResponse.json(cached.map((s) => ({ title: s.title, thesis: s.thesis_text, catalyst: s.catalyst })));
+    if ((cached ?? []).length > 0) {
+      return NextResponse.json(
+        (cached ?? []).map((s) => ({ title: s.title, thesis: s.thesis_text, catalyst: s.catalyst }))
+      );
     }
   }
 

@@ -1,28 +1,22 @@
 import { NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM chain_results WHERE thesis_id = ? ORDER BY tier, id`
-    )
-    .all(id) as Array<{
-    tier: number;
-    company_name: string;
-    ticker: string;
-    market_cap: string;
-    description: string;
-    chain_reasoning: string;
-    bottleneck: number;
-    analyst_coverage: string;
-    alpha_score: string;
-  }>;
+  const { data: rows, error } = await supabase
+    .from("chain_results")
+    .select("tier, company_name, ticker, market_cap, description, chain_reasoning, bottleneck, analyst_coverage, alpha_score")
+    .eq("thesis_id", Number(id))
+    .order("tier")
+    .order("id");
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   const result: Record<string, unknown[]> = {
     tier0: [],
@@ -31,7 +25,7 @@ export async function GET(
     tier3: [],
   };
 
-  for (const row of rows) {
+  for (const row of rows ?? []) {
     const key = `tier${row.tier}`;
     result[key].push({
       name: row.company_name,
@@ -39,7 +33,7 @@ export async function GET(
       marketCap: row.market_cap,
       description: row.description,
       chain_reasoning: row.chain_reasoning,
-      bottleneck: row.bottleneck === 1,
+      bottleneck: row.bottleneck === true,
       analyst_coverage: row.analyst_coverage,
       alphaScore: row.alpha_score,
     });
