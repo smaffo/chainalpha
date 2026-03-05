@@ -1,30 +1,42 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  timeout: 90_000,
+  maxRetries: 2,
+});
 
-// Keep prompts lean to stay within the 30K token/min rate limit.
 const SYSTEM_PROMPT = `You are a financial research analyst. Use web_search to find current data on the company, then respond with ONLY a valid JSON object — no markdown, no code fences, no explanations.`;
 
-// Compact schema: keys only, no verbose example values.
 const JSON_SCHEMA = `{"catalysts":[{"text":"...","date":"Mon YYYY","sentiment":"positive|negative|neutral"}],"insiderActivity":{"buys":0,"sells":0,"netValue":"...","notable":"..."},"smartMoney":{"institutionCount":0,"topHolders":"...","recentChanges":"..."},"analystSentiment":{"buy":0,"hold":0,"sell":0,"avgPriceTarget":"...","currentPrice":"...","upside":"+X%"},"lastUpdated":"YYYY-MM-DD"}`;
 
-const DELAY_MS = 6000; // wait before retrying a 429
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function parseJsonResponse(text: string): unknown {
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  }
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch { /* fall through */ }
+  }
+  throw new SyntaxError("No valid JSON found in response");
 }
 
-async function callAnthropic(userPrompt: string) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return client.beta.messages.create({
-    model: "claude-sonnet-4-5-20250929",
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    betas: ["web-search-2025-03-05"],
-    tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+function apiErrorMessage(err: unknown): string | null {
+  if (err instanceof Anthropic.APIConnectionTimeoutError) {
+    return "This is taking longer than expected — please try again";
+  }
+  if (err instanceof Anthropic.APIError) {
+    if (err.status === 401 || err.status === 403) {
+      return "API credits may be exhausted. Check console.anthropic.com to add credits.";
+    }
+    if (err.status === 429 || (err.status && err.status >= 500)) {
+      return "Research temporarily unavailable — try again";
+    }
+  }
+  return null;
 }
 
 export async function GET(
@@ -42,45 +54,36 @@ export async function GET(
   const userPrompt = `Research ${companyName} (${ticker}): latest news, Q4/recent earnings, insider transactions last 90 days, institutional holder changes, analyst ratings. Return ONLY this JSON structure: ${JSON_SCHEMA}`;
 
   try {
-    let response;
-    try {
-      response = await callAnthropic(userPrompt);
-    } catch (err: unknown) {
-      // Retry once after a delay on rate limit
-      if (
-        err instanceof Error &&
-        err.message.includes("429")
-      ) {
-        await sleep(DELAY_MS);
-        response = await callAnthropic(userPrompt);
-      } else {
-        throw err;
-      }
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (client.beta.messages.create as any)({
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      betas: ["web-search-2025-03-05"],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: userPrompt }],
+    });
 
     const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
+      .filter((b: Anthropic.ContentBlock) => b.type === "text")
+      .map((b: Anthropic.TextBlock) => b.text)
       .join("");
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return NextResponse.json(
-        { error: "No structured data in response" },
-        { status: 500 }
-      );
+    let parsed: unknown;
+    try {
+      parsed = parseJsonResponse(text);
+    } catch {
+      console.error("deep-dive: JSON parse failed. Raw:", text.slice(0, 500));
+      return NextResponse.json({ error: "Research temporarily unavailable — try again" }, { status: 500 });
     }
 
-    const data = JSON.parse(jsonMatch[0]);
-    return NextResponse.json(data);
+    return NextResponse.json(parsed);
   } catch (err: unknown) {
     console.error("Deep dive error:", err);
-    if (err instanceof Error && err.message.includes("429")) {
-      return NextResponse.json(
-        { error: "Rate limit hit — wait a moment and try again" },
-        { status: 429 }
-      );
-    }
-    return NextResponse.json({ error: "Research failed" }, { status: 500 });
+    const msg = apiErrorMessage(err);
+    return NextResponse.json(
+      { error: msg ?? "Research temporarily unavailable — try again" },
+      { status: 500 }
+    );
   }
 }

@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import getDb from "@/lib/db";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  timeout: 90_000,   // 90 s — thesis mapping can take 60+ s
+  maxRetries: 2,     // auto-retry on 429 / 5xx (SDK default, being explicit)
+});
 
 const SYSTEM_PROMPT = `You are an investment research analyst specializing in supply chain mapping and thematic investing.
 
@@ -69,12 +73,7 @@ type ThesisResult = {
 };
 
 const TIER_KEYS = ["tier0", "tier1", "tier2", "tier3"] as const;
-const TIER_NUM: Record<string, number> = {
-  tier0: 0,
-  tier1: 1,
-  tier2: 2,
-  tier3: 3,
-};
+const TIER_NUM: Record<string, number> = { tier0: 0, tier1: 1, tier2: 2, tier3: 3 };
 
 function persistResult(
   thesisText: string,
@@ -83,21 +82,14 @@ function persistResult(
   existingThesisId?: number
 ): number {
   const db = getDb();
-
   let thesisId: number;
 
   if (existingThesisId) {
-    db.prepare(
-      `UPDATE theses SET last_mapped_at = datetime('now'), title = ? WHERE id = ?`
-    ).run(title, existingThesisId);
-    db.prepare(`DELETE FROM chain_results WHERE thesis_id = ?`).run(
-      existingThesisId
-    );
+    db.prepare(`UPDATE theses SET last_mapped_at = datetime('now'), title = ? WHERE id = ?`).run(title, existingThesisId);
+    db.prepare(`DELETE FROM chain_results WHERE thesis_id = ?`).run(existingThesisId);
     thesisId = existingThesisId;
   } else {
-    const info = db
-      .prepare(`INSERT INTO theses (thesis_text, title) VALUES (?, ?)`)
-      .run(thesisText, title);
+    const info = db.prepare(`INSERT INTO theses (thesis_text, title) VALUES (?, ?)`).run(thesisText, title);
     thesisId = info.lastInsertRowid as number;
   }
 
@@ -110,20 +102,9 @@ function persistResult(
 
   const insertAll = db.transaction((res: ThesisResult) => {
     for (const key of TIER_KEYS) {
-      const companies = res[key] ?? [];
-      for (const c of companies) {
-        insertCompany.run(
-          thesisId,
-          TIER_NUM[key],
-          c.name,
-          c.ticker,
-          c.marketCap,
-          c.description,
-          c.chain_reasoning,
-          c.bottleneck ? 1 : 0,
-          c.analyst_coverage,
-          c.alphaScore
-        );
+      for (const c of res[key] ?? []) {
+        insertCompany.run(thesisId, TIER_NUM[key], c.name, c.ticker, c.marketCap,
+          c.description, c.chain_reasoning, c.bottleneck ? 1 : 0, c.analyst_coverage, c.alphaScore);
       }
     }
   });
@@ -132,60 +113,73 @@ function persistResult(
   return thesisId;
 }
 
+function parseJsonResponse(text: string): unknown {
+  let cleaned = text.trim();
+  // Strip markdown fences
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  }
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+  // Try to extract JSON object
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch { /* fall through */ }
+  }
+  throw new SyntaxError("No valid JSON found in response");
+}
+
+function apiErrorMessage(err: unknown): string | null {
+  if (err instanceof Anthropic.APIConnectionTimeoutError) {
+    return "This is taking longer than expected — please try again";
+  }
+  if (err instanceof Anthropic.APIError) {
+    if (err.status === 401 || err.status === 403) {
+      return "API credits may be exhausted. Check console.anthropic.com to add credits.";
+    }
+    if (err.status === 429 || (err.status && err.status >= 500)) {
+      return "Mapping failed — please try again in a moment";
+    }
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { thesis, thesisId } = await request.json();
 
     if (!thesis?.trim()) {
-      return NextResponse.json(
-        { error: "Thesis is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Thesis is required" }, { status: 400 });
     }
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-5-20250929",
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `Map this investment thesis into the 4-tier supply chain alpha framework: ${thesis.trim()}`,
-        },
-      ],
+      messages: [{ role: "user", content: `Map this investment thesis into the 4-tier supply chain alpha framework: ${thesis.trim()}` }],
     });
 
     const content = message.content[0];
     if (content.type !== "text") {
-      return NextResponse.json(
-        { error: "Unexpected response format" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Mapping failed — please try again in a moment" }, { status: 500 });
     }
 
-    // Strip markdown code fences if present
-    let jsonText = content.text.trim();
-    if (jsonText.startsWith("```")) {
-      jsonText = jsonText
-        .replace(/^```(?:json)?\n?/, "")
-        .replace(/\n?```$/, "");
+    let parsed: unknown;
+    try {
+      parsed = parseJsonResponse(content.text);
+    } catch {
+      console.error("map-thesis: JSON parse failed. Raw:", content.text.slice(0, 500));
+      return NextResponse.json({ error: "Mapping failed — please try again in a moment" }, { status: 500 });
     }
 
-    const parsed = JSON.parse(jsonText);
     const { title = "", ...result } = parsed as { title: string } & ThesisResult;
     const savedThesisId = persistResult(thesis.trim(), result, title, thesisId);
 
     return NextResponse.json({ result, thesisId: savedThesisId, title });
   } catch (err) {
     console.error("map-thesis error:", err);
-    if (err instanceof SyntaxError) {
-      return NextResponse.json(
-        { error: "Failed to parse model response as JSON" },
-        { status: 500 }
-      );
-    }
+    const msg = apiErrorMessage(err);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: msg ?? "Mapping failed — please try again in a moment" },
       { status: 500 }
     );
   }

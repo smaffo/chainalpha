@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SavedThesis } from "@/lib/types";
+
+const MAP_MESSAGES = [
+  "Analyzing supply chains…",
+  "Identifying bottlenecks…",
+  "Almost there…",
+];
 
 interface ThesisSuggestion {
   title: string;
@@ -50,6 +56,9 @@ export default function Home() {
     companies: number;
     bottlenecks: number;
   } | null>(null);
+
+  const [mapMsgIdx, setMapMsgIdx] = useState(0);
+  const mapMsgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [suggestions, setSuggestions] = useState<ThesisSuggestion[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -104,6 +113,19 @@ export default function Home() {
       }
     });
   }, []);
+
+  // Rotate loading message every 15 s while mapping
+  useEffect(() => {
+    if (loading) {
+      setMapMsgIdx(0);
+      mapMsgTimer.current = setInterval(() => {
+        setMapMsgIdx((i) => Math.min(i + 1, MAP_MESSAGES.length - 1));
+      }, 15_000);
+    } else {
+      if (mapMsgTimer.current) clearInterval(mapMsgTimer.current);
+    }
+    return () => { if (mapMsgTimer.current) clearInterval(mapMsgTimer.current); };
+  }, [loading]);
 
   async function handleMapThesis() {
     const text = thesis.trim();
@@ -267,10 +289,20 @@ export default function Home() {
               disabled={loading || !thesis.trim()}
               className="px-6 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
-              {loading ? "Mapping…" : "Map this thesis"}
+              {loading ? MAP_MESSAGES[mapMsgIdx] : "Map this thesis"}
             </button>
-            <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
+            {!loading && <span className="font-mono text-xs text-zinc-600">⌘ + Enter</span>}
+            {error && (
+              <div className="flex items-center gap-3">
+                <p className="text-red-400 text-sm">{error}</p>
+                <button
+                  onClick={handleMapThesis}
+                  className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-3 py-1 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Suggest row */}

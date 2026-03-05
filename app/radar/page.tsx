@@ -227,7 +227,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ModalBody({ cacheEntry }: { cacheEntry: CacheEntry }) {
+function ModalBody({ cacheEntry, onRetry }: { cacheEntry: CacheEntry; onRetry: () => void }) {
   if (cacheEntry.status === "loading") {
     return (
       <div className="p-5 space-y-6">
@@ -247,8 +247,14 @@ function ModalBody({ cacheEntry }: { cacheEntry: CacheEntry }) {
 
   if (cacheEntry.status === "error") {
     return (
-      <div className="p-8 text-center">
-        <p className="text-red-400 text-sm font-mono">{cacheEntry.message}</p>
+      <div className="p-8 text-center space-y-4">
+        <p className="text-zinc-400 text-sm">{cacheEntry.message}</p>
+        <button
+          onClick={onRetry}
+          className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-4 py-1.5 transition-colors"
+        >
+          Try again
+        </button>
       </div>
     );
   }
@@ -462,7 +468,7 @@ function DeepDiveModal({
 
         {/* Scrollable body */}
         <div className="overflow-y-auto flex-1">
-          <ModalBody cacheEntry={cacheEntry} />
+          <ModalBody cacheEntry={cacheEntry} onRetry={onRefresh} />
         </div>
 
         {/* Footer */}
