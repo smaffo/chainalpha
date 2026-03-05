@@ -1,17 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SavedThesis } from "@/lib/types";
 
-const EXAMPLE_THESES = [
-  "AI infrastructure will require massive energy and cooling buildout through 2030",
-  "Onshoring semiconductor manufacturing will drive US chip equipment demand",
-  "The obesity drug boom will reshape food, medical devices, and insurance",
-];
+interface ThesisSuggestion {
+  title: string;
+  thesis: string;
+  catalyst: string;
+}
+
+const SUGGESTION_BORDERS = [
+  "border-l-zinc-500",
+  "border-l-amber-500",
+  "border-l-emerald-600",
+  "border-l-purple-600",
+] as const;
 
 export default function Home() {
   const router = useRouter();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const [thesis, setThesis] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +29,10 @@ export default function Home() {
     companies: number;
     bottlenecks: number;
   } | null>(null);
+
+  const [suggestions, setSuggestions] = useState<ThesisSuggestion[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/theses")
@@ -55,9 +68,33 @@ export default function Home() {
     }
   }
 
+  async function fetchSuggestions() {
+    setSuggestLoading(true);
+    setSuggestError(null);
+    try {
+      const res = await fetch("/api/suggest-theses");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      setSuggestions(data);
+    } catch (err) {
+      setSuggestError(
+        err instanceof Error ? err.message : "Failed to load suggestions"
+      );
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
+  function fillThesis(text: string) {
+    setThesis(text);
+    textareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    textareaRef.current?.focus();
+  }
+
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6">
+    <main className="min-h-screen flex flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-2xl">
+
         {/* Header */}
         <div className="mb-6">
           <div className="flex items-center gap-3 mb-4">
@@ -74,7 +111,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Stats bar — accumulated intelligence */}
+        {/* Stats bar */}
         {stats && stats.theses > 0 && (
           <div className="mb-8 flex items-stretch gap-px rounded-xl overflow-hidden border border-zinc-800/60">
             {[
@@ -109,6 +146,7 @@ export default function Home() {
             Your Thesis
           </label>
           <textarea
+            ref={textareaRef}
             value={thesis}
             onChange={(e) => setThesis(e.target.value)}
             onKeyDown={(e) => {
@@ -120,19 +158,69 @@ export default function Home() {
             className="w-full bg-[#0f0f17] border border-zinc-800 rounded-xl px-5 py-4 text-slate-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-600 text-base leading-relaxed transition-colors"
           />
 
-          {/* Example theses */}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {EXAMPLE_THESES.map((ex) => (
+          {/* Suggest row */}
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <button
+              onClick={fetchSuggestions}
+              disabled={suggestLoading}
+              className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              {suggestLoading ? (
+                <>
+                  <span className="flex gap-0.5">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="w-1 h-1 rounded-full bg-zinc-500 animate-pulse inline-block"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                  Scanning markets…
+                </>
+              ) : (
+                <>✨ Suggest theses</>
+              )}
+            </button>
+
+            {suggestions.length > 0 && !suggestLoading && (
               <button
-                key={ex}
-                onClick={() => setThesis(ex)}
-                className="font-mono text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500 rounded-full px-3 py-1 transition-colors"
+                onClick={fetchSuggestions}
+                className="font-mono text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
               >
-                {ex.length > 52 ? ex.slice(0, 52) + "…" : ex}
+                Regenerate
               </button>
-            ))}
+            )}
+
+            {suggestError && (
+              <p className="font-mono text-xs text-red-400">{suggestError}</p>
+            )}
           </div>
 
+          {/* Suggestion cards */}
+          {!suggestLoading && suggestions.length > 0 && (
+            <div className="mt-4 grid gap-3">
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => fillThesis(s.thesis)}
+                  className={`text-left p-4 rounded-xl bg-[#0f1118] border border-zinc-800/60 border-l-2 ${SUGGESTION_BORDERS[i % 4]} hover:bg-[#12131f] transition-colors w-full`}
+                >
+                  <p className="font-semibold text-white text-sm mb-1.5">
+                    {s.title}
+                  </p>
+                  <p className="text-zinc-400 text-xs leading-relaxed mb-3">
+                    {s.thesis}
+                  </p>
+                  <span className="inline-flex items-center font-mono text-xs text-amber-500/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+                    {s.catalyst}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Map button */}
           <div className="mt-5 flex items-center gap-4 flex-wrap">
             <button
               onClick={handleMapThesis}
