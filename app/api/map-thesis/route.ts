@@ -5,11 +5,11 @@ import { Company, ThesisResult } from "@/lib/types";
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  timeout: 90_000,
+  timeout: 150_000,
   maxRetries: 2,
 });
 
-// ── Stage 1 system prompt ────────────────────────────────────────────────────
+// ── Stage 1: structural chain map ────────────────────────────────────────────
 
 const STAGE1_SYSTEM = `You are a structural supply chain analyst. Given an investment thesis, map the full industrial value chain as a hierarchy of functional NODES organized by tier. Do NOT list specific companies. Only list supply chain roles/categories.
 
@@ -44,9 +44,60 @@ Return ONLY a JSON object, no markdown, no backticks:
   ]
 }`;
 
-// ── Stage 2 system prompt (per node) ────────────────────────────────────────
+// ── Step 2A: web search for candidates ───────────────────────────────────────
 
-function stage2System(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
+const STEP2A_SYSTEM = `You are a financial research assistant. Your ONLY job is to search the web and find publicly traded companies that operate in a specific supply chain category. Search thoroughly and cast a wide net.
+
+Rules:
+- Search for companies using multiple relevant queries
+- ONLY include companies that are currently publicly traded on major exchanges (NYSE, NASDAQ, LSE, Frankfurt, Tokyo, Hong Kong, Euronext, ASX)
+- Verify each company is real and currently trading (not acquired, not delisted, not private)
+- Use the company's PRIMARY listing ticker and canonical name
+- Include approximate current market cap
+
+Return ONLY a JSON array of candidates, no other text, no markdown:
+[
+  { "company_name": "Full Name", "ticker": "PRIMARY.EXCHANGE", "market_cap": "~$XB" }
+]
+
+Find 8-12 candidate companies. Cast a wide net — include both well-known and obscure names.`;
+
+// ── Step 2B: validate and rank ────────────────────────────────────────────────
+
+const STEP2B_SYSTEM = `You are an investment research analyst specializing in supply chain analysis. You will receive a list of candidate companies found via web search for a specific supply chain node, within the context of an investment thesis.
+
+Your job is to:
+1. VALIDATE: Remove any company that doesn't have genuine, specific structural exposure to this supply chain node. No narrative association — only companies with real revenue tied to this function.
+2. RANK: Order remaining companies by structural importance to this node — companies with higher revenue concentration in this specific function rank higher.
+3. SELECT: Pick the top 2-3 companies that best represent this supply chain node.
+4. ANALYZE each selected company:
+   - chain_reasoning: 1-2 sentences explaining HOW this company specifically connects to this node
+   - description: 1-2 sentences about what the company does
+   - analyst_coverage: heavy (10+ analysts), moderate (4-9), light (1-3), minimal (0)
+   - bottleneck: true ONLY if the company is one of 3 or fewer global suppliers for this function AND customers cannot switch without 12+ months of requalification. Most companies are NOT bottlenecks.
+
+TIER PLACEMENT RULES based on the tier of the parent node:
+- Tier 0: These are context companies. Keep the most recognizable mega-caps.
+- Tier 1: Well-known but not household names. Market cap typically $10B-$200B.
+- Tier 2: Under-followed enablers. Prioritize companies with moderate or light coverage.
+- Tier 3: Deep upstream hidden gems. MUST be under $5B market cap. Prioritize companies with light or minimal coverage. A $60B company is NEVER Tier 3.
+
+Return ONLY a JSON array, no markdown:
+[
+  {
+    "company_name": "Full Name",
+    "ticker": "PRIMARY.EXCHANGE",
+    "market_cap": "~$XB",
+    "analyst_coverage": "moderate",
+    "bottleneck": false,
+    "chain_reasoning": "Specific explanation of structural connection",
+    "description": "What the company does"
+  }
+]`;
+
+// ── Fallback: memory-based approach (when 2A fails) ───────────────────────────
+
+function fallbackSystem(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
   const countInstruction = tier === 0
     ? "List 2-3 companies maximum. For Tier 0: These MUST be the most recognizable, largest companies driving this thesis. The user should look at Tier 0 and immediately understand what the thesis is about. For an AI thesis, that means NVIDIA, Amazon, Microsoft etc. Do NOT try to be creative or obscure in Tier 0 — this tier is context, not discovery."
     : "List exactly 2 companies. No more.";
@@ -58,37 +109,32 @@ THESIS CONTEXT: ${thesisText}
 
 Rules:
 1. ONLY list companies traded on major exchanges (NYSE, NASDAQ, LSE, Frankfurt, Tokyo, Hong Kong, Euronext)
-2. Use CANONICAL COMPANY IDENTITY — not ticker symbols. Merge listings that represent the same company (e.g., ADR vs primary listing). Output each company with its PRIMARY listing ticker only. Example: Siemens AG uses SIE.DE (not SIEGY)
-3. BOTTLENECK FLAG — use this sparingly. Flag bottleneck = true ONLY for companies that are genuinely irreplaceable in the supply chain. The bar is HIGH:
-   - The company must be one of 3 or fewer global suppliers for this specific function
-   - AND customers cannot switch to an alternative without 12+ months of requalification or retooling
-   - OR the company controls a scarce natural resource with no synthetic substitute
-
-   Most companies are NOT bottlenecks. In a typical supply chain of 25 companies, only 3-5 should be flagged. If you're flagging more than that, your bar is too low.
-4. Provide 1-2 sentences of chain_reasoning explaining specifically HOW this company connects to this supply chain node and WHY it matters to the thesis
-5. ${countInstruction} Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
+2. Use CANONICAL COMPANY IDENTITY — not ticker symbols. Output each company with its PRIMARY listing ticker only.
+3. BOTTLENECK FLAG — use this sparingly. Flag bottleneck = true ONLY for companies that are genuinely irreplaceable:
+   - One of 3 or fewer global suppliers AND customers cannot switch without 12+ months of requalification
+   - OR controls a scarce natural resource with no synthetic substitute
+   Most companies are NOT bottlenecks.
+4. Provide 1-2 sentences of chain_reasoning explaining HOW this company connects to this node.
+5. ${countInstruction}
 6. Include approximate market cap and analyst coverage level (heavy: 10+ analysts, moderate: 4-9, light: 1-3, minimal: 0)
-7. QUALITY OVER QUANTITY. Only include a company if it has genuine, specific, structural exposure to this node. Every company you list should teach the user something they likely didn't know. If a company is obvious and widely followed, it belongs in Tier 0-1 only. Tier 2-3 companies should be names that make an informed investor say 'I didn't know about this one.'
-
-   TIER 3 SIZE CONSTRAINT: Tier 3 'Deep Upstream' companies should predominantly be small-cap or micro-cap. Target companies under $2B market cap, ideally under $500M. These are the genuinely under-followed names where mispricing exists. A $60B industrial conglomerate is NEVER a Tier 3 hidden gem regardless of its supply chain position. If you cannot find small public companies for a Tier 3 node, list the smallest and least-followed ones you can identify — the ones with 'light' or 'minimal' analyst coverage.
-8. Do not include a company unless it has genuine, specific exposure to this node. No narrative association — only structural exposure
-9. IMPORTANT: Tier placement reflects INVESTMENT DISCOVERY VALUE, not just supply chain position. A $3 trillion company with heavy analyst coverage is NEVER a 'hidden enabler' regardless of where it sits in the supply chain. Consider both structural position AND how well-known/followed the company is when assigning to a tier.
+7. TIER 3 SIZE CONSTRAINT: Tier 3 companies must be under $2B market cap. A $60B conglomerate is NEVER Tier 3.
+8. IMPORTANT: Tier placement reflects INVESTMENT DISCOVERY VALUE, not just supply chain position.
 
 Return ONLY a JSON array, no markdown, no backticks:
 [
   {
-    "company_name": "Flowserve Corporation",
-    "ticker": "FLS",
+    "company_name": "Full Name",
+    "ticker": "TICK",
     "market_cap": "~$6B",
     "analyst_coverage": "moderate",
     "bottleneck": false,
-    "chain_reasoning": "Leading manufacturer of industrial pumps and flow control equipment used in data center cooling loops. Supplies to all major cooling system integrators.",
-    "description": "Designs and manufactures precision pumps, valves, and seals for critical flow applications across energy, water, and industrial markets."
+    "chain_reasoning": "...",
+    "description": "..."
   }
 ]`;
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface StructureNode {
   name: string;
@@ -113,6 +159,12 @@ interface RawCompany {
   description: string;
 }
 
+interface CandidateCompany {
+  company_name: string;
+  ticker: string;
+  market_cap: string;
+}
+
 interface EnrichedCompany {
   name: string;
   ticker: string;
@@ -126,7 +178,7 @@ interface EnrichedCompany {
   tier: number;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function parseJsonObject(text: string): unknown {
   let cleaned = text.trim();
@@ -158,6 +210,14 @@ function parseJsonArray(text: string): unknown[] {
     } catch { /* fall through */ }
   }
   return [];
+}
+
+// Handles text blocks from responses that may include web_search result blocks
+function extractText(content: Array<{ type: string; text?: string }>): string {
+  return content
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("\n");
 }
 
 const COVERAGE_ADJ: Record<string, number> = { minimal: 2, light: 1, moderate: 0, heavy: -1 };
@@ -196,11 +256,16 @@ function enforceTierFloor(c: EnrichedCompany): EnrichedCompany {
   return c.tier <= maxTier ? c : { ...c, tier: maxTier };
 }
 
-const PRIVATE_TICKER_PATTERNS = /private|not publicly traded|n\/a|not listed|unlisted/i;
-const PRIVATE_NAME_PATTERNS = /\(private|\bnot investable\b/i;
+const PRIVATE_TICKER_RE = /private|not publicly traded|n\/a|not listed|unlisted/i;
+const PRIVATE_NAME_RE = /\(private|\bnot investable\b/i;
+const ACQUIRED_RE = /\bacquired\b|\bdelisted\b/i;
 
 function isPubliclyTraded(c: EnrichedCompany): boolean {
-  return !PRIVATE_TICKER_PATTERNS.test(c.ticker) && !PRIVATE_NAME_PATTERNS.test(c.name);
+  return (
+    !PRIVATE_TICKER_RE.test(c.ticker) &&
+    !PRIVATE_NAME_RE.test(c.name) &&
+    !ACQUIRED_RE.test(`${c.name} ${c.description} ${c.chain_reasoning}`)
+  );
 }
 
 function normalizeName(name: string): string {
@@ -235,7 +300,94 @@ function deduplicateCompanies(companies: EnrichedCompany[]): EnrichedCompany[] {
   return Array.from(byTicker.values());
 }
 
-// ── Database ─────────────────────────────────────────────────────────────────
+function toEnriched(raw: RawCompany[], tier: number, nodeName: string): EnrichedCompany[] {
+  return raw.map((c): EnrichedCompany => ({
+    name: c.company_name,
+    ticker: c.ticker,
+    marketCap: c.market_cap,
+    description: c.description,
+    chain_reasoning: c.chain_reasoning,
+    bottleneck: Boolean(c.bottleneck),
+    analyst_coverage: c.analyst_coverage ?? "moderate",
+    alphaScore: String(calcAlphaScore(tier, c.analyst_coverage ?? "moderate", Boolean(c.bottleneck))),
+    supply_chain_node: nodeName,
+    tier,
+  }));
+}
+
+// ── Node processing (2A → 2B with fallback) ───────────────────────────────────
+
+async function processNode(tier: number, node: StructureNode, thesisText: string): Promise<EnrichedCompany[]> {
+  // Step 2A: web search for candidates
+  let candidates: CandidateCompany[] = [];
+  try {
+    const res2A = await client.messages.create({
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 1024,
+      system: STEP2A_SYSTEM,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
+      messages: [{
+        role: "user",
+        content: `Search the web for publicly traded companies operating in: ${node.name} — ${node.description}. Find companies across all major global exchanges. Include both large established players and small under-followed specialists.`,
+      }],
+    });
+    const text2A = extractText(res2A.content as Array<{ type: string; text?: string }>);
+    const parsed = parseJsonArray(text2A);
+    if (parsed.length > 0) {
+      candidates = parsed as CandidateCompany[];
+    }
+  } catch (err) {
+    console.error(`map-thesis step2A: node "${node.name}" search failed:`, err);
+  }
+
+  // If 2A yielded no candidates, fall back to memory-based generation
+  if (candidates.length === 0) {
+    console.warn(`map-thesis step2A: no candidates for "${node.name}", using fallback`);
+    try {
+      const res = await client.messages.create({
+        model: "claude-sonnet-4-5-20250929",
+        max_tokens: 1024,
+        system: fallbackSystem(node.name, node.description, thesisText, tier),
+        messages: [{ role: "user", content: "List the companies." }],
+      });
+      const content = res.content[0];
+      if (content.type !== "text") return [];
+      return toEnriched(parseJsonArray(content.text) as RawCompany[], tier, node.name);
+    } catch (err) {
+      console.error(`map-thesis fallback: node "${node.name}" failed:`, err);
+      return [];
+    }
+  }
+
+  // Step 2B: validate, rank, and analyze candidates
+  try {
+    const res2B = await client.messages.create({
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 1024,
+      system: STEP2B_SYSTEM,
+      messages: [{
+        role: "user",
+        content: `Thesis: ${thesisText}
+Supply chain node: ${node.name} — ${node.description}
+Tier: ${tier}
+
+Candidate companies found via web search:
+${JSON.stringify(candidates, null, 2)}
+
+Validate, rank, and select the top 2-3 companies. Apply the tier placement rules strictly.`,
+      }],
+    });
+    const content2B = res2B.content[0];
+    if (content2B.type !== "text") return [];
+    return toEnriched(parseJsonArray(content2B.text) as RawCompany[], tier, node.name);
+  } catch (err) {
+    console.error(`map-thesis step2B: node "${node.name}" validation failed:`, err);
+    return [];
+  }
+}
+
+// ── Database ──────────────────────────────────────────────────────────────────
 
 const TIER_KEYS = ["tier0", "tier1", "tier2", "tier3"] as const;
 
@@ -290,7 +442,7 @@ async function persistResult(
   return thesisId;
 }
 
-// ── Error handling ────────────────────────────────────────────────────────────
+// ── Error handling ─────────────────────────────────────────────────────────────
 
 function apiErrorMessage(err: unknown): string | null {
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
@@ -307,7 +459,7 @@ function apiErrorMessage(err: unknown): string | null {
   return null;
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+// ── Main handler ───────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   try {
@@ -319,7 +471,7 @@ export async function POST(request: NextRequest) {
 
     const thesisText = thesis.trim();
 
-    // ── Stage 1: structural chain map ───────────────────────────────────────
+    // ── Stage 1: structural chain map ─────────────────────────────────────────
     const s1Response = await client.messages.create({
       model: "claude-sonnet-4-5-20250929",
       max_tokens: 2048,
@@ -340,7 +492,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Mapping failed — please try again in a moment" }, { status: 500 });
     }
 
-    // ── Stage 2: populate companies for each node in parallel ───────────────
+    // ── Stage 2: process all nodes in parallel (2A search → 2B validate) ─────
     const nodeJobs: Array<{ tier: number; node: StructureNode }> = [];
     for (const tierData of structure.tiers ?? []) {
       for (const node of tierData.nodes ?? []) {
@@ -349,41 +501,10 @@ export async function POST(request: NextRequest) {
     }
 
     const nodeResults = await Promise.all(
-      nodeJobs.map(async ({ tier, node }) => {
-        try {
-          const res = await client.messages.create({
-            model: "claude-sonnet-4-5-20250929",
-            max_tokens: 1024,
-            system: stage2System(node.name, node.description, thesisText, tier),
-            messages: [{ role: "user", content: "List the companies." }],
-          });
-          const content = res.content[0];
-          if (content.type !== "text") return [];
-          const raw = parseJsonArray(content.text) as RawCompany[];
-          return raw.map((c): EnrichedCompany => ({
-            name: c.company_name,
-            ticker: c.ticker,
-            marketCap: c.market_cap,
-            description: c.description,
-            chain_reasoning: c.chain_reasoning,
-            bottleneck: Boolean(c.bottleneck),
-            analyst_coverage: c.analyst_coverage ?? "moderate",
-            alphaScore: String(calcAlphaScore(
-              tier,
-              c.analyst_coverage ?? "moderate",
-              Boolean(c.bottleneck)
-            )),
-            supply_chain_node: node.name,
-            tier,
-          }));
-        } catch (err) {
-          console.error(`map-thesis stage2: node "${node.name}" failed:`, err);
-          return [];
-        }
-      })
+      nodeJobs.map(({ tier, node }) => processNode(tier, node, thesisText))
     );
 
-    // ── Combine, filter private, and deduplicate ────────────────────────────
+    // ── Combine, filter, enforce tier floors, deduplicate ─────────────────────
     const allCompanies = nodeResults.flat().filter(isPubliclyTraded).map(enforceTierFloor);
     const deduplicated = deduplicateCompanies(allCompanies);
 
