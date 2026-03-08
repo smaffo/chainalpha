@@ -9,7 +9,7 @@ export async function GET(
 
   const { data: rows, error } = await supabase
     .from("chain_results")
-    .select("tier, company_name, ticker, market_cap, description, chain_reasoning, bottleneck, analyst_coverage, alpha_score")
+    .select("tier, company_name, ticker, market_cap, description, chain_reasoning, bottleneck, analyst_coverage, alpha_score, supply_chain_node")
     .eq("thesis_id", Number(id))
     .order("tier")
     .order("id");
@@ -36,6 +36,7 @@ export async function GET(
       bottleneck: row.bottleneck === true,
       analyst_coverage: row.analyst_coverage,
       alphaScore: row.alpha_score,
+      supply_chain_node: row.supply_chain_node ?? undefined,
     });
   }
 

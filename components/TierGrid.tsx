@@ -254,6 +254,11 @@ export function TierGrid({ result }: { result: ThesisResult }) {
                       {/* Expanded detail */}
                       {isExpanded && (
                         <div className="mt-3 pt-3 border-t border-zinc-800/40 space-y-2">
+                          {company.supply_chain_node && (
+                            <p className="font-mono text-[10px] text-zinc-700 uppercase tracking-widest">
+                              {company.supply_chain_node}
+                            </p>
+                          )}
                           <p className="text-zinc-500 text-xs leading-relaxed">
                             {company.description}
                           </p>

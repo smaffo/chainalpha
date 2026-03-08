@@ -6,7 +6,8 @@ export interface Company {
   chain_reasoning: string;
   bottleneck: boolean;
   analyst_coverage: "heavy" | "moderate" | "light" | "minimal";
-  alphaScore: "low" | "moderate" | "high" | "highest";
+  alphaScore: string;
+  supply_chain_node?: string;
 }
 
 export interface ThesisResult {

@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS chain_results (
   created_at timestamp default now()
 );
 
+-- Migration: add supply_chain_node column (run if upgrading from earlier schema)
+ALTER TABLE chain_results ADD COLUMN IF NOT EXISTS supply_chain_node text;
+
 CREATE TABLE IF NOT EXISTS suggested_theses (
   id serial primary key,
   title text,
