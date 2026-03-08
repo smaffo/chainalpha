@@ -20,7 +20,7 @@ Define four structural tiers:
 - Tier 3 — Raw materials / enabling infrastructure: Upstream inputs, specialty materials, niche equipment, foundational services
 
 Rules:
-- Generate 3-5 nodes per tier
+- Generate exactly this many nodes per tier: Tier 0: 2 nodes (the obvious demand drivers), Tier 1: 3 nodes, Tier 2: 3 nodes, Tier 3: 3 nodes. Total: 11 nodes.
 - Each node should be a specific supply chain function, not a vague category (Good: 'Grain-oriented electrical steel for transformer cores' Bad: 'Materials')
 - Nodes should trace a logical chain — each tier feeds into the tier above it
 - Think globally, not just US-centric
@@ -64,7 +64,7 @@ Rules:
    - Critical input required by multiple downstream industries
    Flag bottleneck as true ONLY if the company meets at least 2 of these criteria
 4. Provide 1-2 sentences of chain_reasoning explaining specifically HOW this company connects to this supply chain node and WHY it matters to the thesis
-5. List 3-5 companies per node. Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
+5. List 2-3 companies per node, maximum 3. Only include companies with genuine structural exposure — quality over quantity. Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
 6. Include approximate market cap and analyst coverage level (heavy: 10+ analysts, moderate: 4-9, light: 1-3, minimal: 0)
 7. Do not include a company unless it has genuine, specific exposure to this node. No narrative association — only structural exposure
 
