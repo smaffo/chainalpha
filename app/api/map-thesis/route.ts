@@ -20,7 +20,7 @@ Define four structural tiers:
 - Tier 3 — Raw materials / enabling infrastructure: Upstream inputs, specialty materials, niche equipment, foundational services
 
 Rules:
-- Generate exactly this many nodes per tier: Tier 0: 1 node (the primary demand driver — users already know this), Tier 1: 2 nodes, Tier 2: 3 nodes, Tier 3: 3 nodes. Total: 9 nodes.
+- Generate exactly this many nodes per tier: Tier 0: 2 nodes (the primary demand drivers that everyone knows), Tier 1: 2 nodes, Tier 2: 3 nodes, Tier 3: 3 nodes. Total: 10 nodes.
 - Each node should be a specific supply chain function, not a vague category (Good: 'Grain-oriented electrical steel for transformer cores' Bad: 'Materials')
 - Nodes should trace a logical chain — each tier feeds into the tier above it
 - Think globally, not just US-centric
@@ -48,7 +48,7 @@ Return ONLY a JSON object, no markdown, no backticks:
 
 function stage2System(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
   const countInstruction = tier === 0
-    ? "List 2-3 companies maximum."
+    ? "List 2-3 companies maximum. For Tier 0: These MUST be the most recognizable, largest companies driving this thesis. The user should look at Tier 0 and immediately understand what the thesis is about. For an AI thesis, that means NVIDIA, Amazon, Microsoft etc. Do NOT try to be creative or obscure in Tier 0 — this tier is context, not discovery."
     : "List exactly 2 companies. No more.";
   return `You are a financial research analyst specializing in public equity identification. List publicly traded companies that operate in the following supply chain category:
 
