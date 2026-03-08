@@ -56,13 +56,12 @@ THESIS CONTEXT: ${thesisText}
 Rules:
 1. ONLY list companies traded on major exchanges (NYSE, NASDAQ, LSE, Frankfurt, Tokyo, Hong Kong, Euronext)
 2. Use CANONICAL COMPANY IDENTITY — not ticker symbols. Merge listings that represent the same company (e.g., ADR vs primary listing). Output each company with its PRIMARY listing ticker only. Example: Siemens AG uses SIE.DE (not SIEGY)
-3. Identify STRUCTURAL BOTTLENECKS defined as:
-   - Limited number of suppliers (3 or fewer globally)
-   - High switching costs for customers
-   - Regulatory or technological barriers to entry
-   - Capacity constraints that cannot be resolved in under 2 years
-   - Critical input required by multiple downstream industries
-   Flag bottleneck as true ONLY if the company meets at least 2 of these criteria
+3. BOTTLENECK FLAG — use this sparingly. Flag bottleneck = true ONLY for companies that are genuinely irreplaceable in the supply chain. The bar is HIGH:
+   - The company must be one of 3 or fewer global suppliers for this specific function
+   - AND customers cannot switch to an alternative without 12+ months of requalification or retooling
+   - OR the company controls a scarce natural resource with no synthetic substitute
+
+   Most companies are NOT bottlenecks. In a typical supply chain of 25 companies, only 3-5 should be flagged. If you're flagging more than that, your bar is too low.
 4. Provide 1-2 sentences of chain_reasoning explaining specifically HOW this company connects to this supply chain node and WHY it matters to the thesis
 5. List 2-3 companies per node, maximum 3. Only include companies with genuine structural exposure — quality over quantity. Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
 6. Include approximate market cap and analyst coverage level (heavy: 10+ analysts, moderate: 4-9, light: 1-3, minimal: 0)
@@ -161,6 +160,13 @@ function calcAlphaScore(tier: number, coverage: string, bottleneck: boolean): nu
   const base = TIER_BASE[tier] ?? 2;
   const adj = COVERAGE_ADJ[coverage] ?? 0;
   return Math.max(1, Math.min(10, base + adj + (bottleneck ? 2 : 0)));
+}
+
+const PRIVATE_TICKER_PATTERNS = /private|not publicly traded|n\/a|not listed|unlisted/i;
+const PRIVATE_NAME_PATTERNS = /\(private|\bnot investable\b/i;
+
+function isPubliclyTraded(c: EnrichedCompany): boolean {
+  return !PRIVATE_TICKER_PATTERNS.test(c.ticker) && !PRIVATE_NAME_PATTERNS.test(c.name);
 }
 
 function normalizeName(name: string): string {
@@ -343,8 +349,8 @@ export async function POST(request: NextRequest) {
       })
     );
 
-    // ── Combine and deduplicate ──────────────────────────────────────────────
-    const allCompanies = nodeResults.flat();
+    // ── Combine, filter private, and deduplicate ────────────────────────────
+    const allCompanies = nodeResults.flat().filter(isPubliclyTraded);
     const deduplicated = deduplicateCompanies(allCompanies);
 
     const result: ThesisResult = { tier0: [], tier1: [], tier2: [], tier3: [] };
