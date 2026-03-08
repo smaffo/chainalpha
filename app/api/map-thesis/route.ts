@@ -20,7 +20,7 @@ Define four structural tiers:
 - Tier 3 — Raw materials / enabling infrastructure: Upstream inputs, specialty materials, niche equipment, foundational services
 
 Rules:
-- Generate exactly this many nodes per tier: Tier 0: 2 nodes (the obvious demand drivers), Tier 1: 3 nodes, Tier 2: 3 nodes, Tier 3: 3 nodes. Total: 11 nodes.
+- Generate exactly this many nodes per tier: Tier 0: 1 node (the primary demand driver — users already know this), Tier 1: 2 nodes, Tier 2: 3 nodes, Tier 3: 3 nodes. Total: 9 nodes.
 - Each node should be a specific supply chain function, not a vague category (Good: 'Grain-oriented electrical steel for transformer cores' Bad: 'Materials')
 - Nodes should trace a logical chain — each tier feeds into the tier above it
 - Think globally, not just US-centric
@@ -46,7 +46,10 @@ Return ONLY a JSON object, no markdown, no backticks:
 
 // ── Stage 2 system prompt (per node) ────────────────────────────────────────
 
-function stage2System(nodeName: string, nodeDesc: string, thesisText: string): string {
+function stage2System(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
+  const countInstruction = tier === 0
+    ? "List 2-3 companies maximum."
+    : "List exactly 2 companies. No more.";
   return `You are a financial research analyst specializing in public equity identification. List publicly traded companies that operate in the following supply chain category:
 
 NODE: ${nodeName}
@@ -63,10 +66,13 @@ Rules:
 
    Most companies are NOT bottlenecks. In a typical supply chain of 25 companies, only 3-5 should be flagged. If you're flagging more than that, your bar is too low.
 4. Provide 1-2 sentences of chain_reasoning explaining specifically HOW this company connects to this supply chain node and WHY it matters to the thesis
-5. List 2-3 companies per node, maximum 3. Only include companies with genuine structural exposure — quality over quantity. Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
+5. ${countInstruction} Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
 6. Include approximate market cap and analyst coverage level (heavy: 10+ analysts, moderate: 4-9, light: 1-3, minimal: 0)
-7. Do not include a company unless it has genuine, specific exposure to this node. No narrative association — only structural exposure
-8. IMPORTANT: Tier placement reflects INVESTMENT DISCOVERY VALUE, not just supply chain position. A $3 trillion company with heavy analyst coverage is NEVER a 'hidden enabler' regardless of where it sits in the supply chain. Consider both structural position AND how well-known/followed the company is when assigning to a tier.
+7. QUALITY OVER QUANTITY. Only include a company if it has genuine, specific, structural exposure to this node. Every company you list should teach the user something they likely didn't know. If a company is obvious and widely followed, it belongs in Tier 0-1 only. Tier 2-3 companies should be names that make an informed investor say 'I didn't know about this one.'
+
+   TIER 3 SIZE CONSTRAINT: Tier 3 'Deep Upstream' companies should predominantly be small-cap or micro-cap. Target companies under $2B market cap, ideally under $500M. These are the genuinely under-followed names where mispricing exists. A $60B industrial conglomerate is NEVER a Tier 3 hidden gem regardless of its supply chain position. If you cannot find small public companies for a Tier 3 node, list the smallest and least-followed ones you can identify — the ones with 'light' or 'minimal' analyst coverage.
+8. Do not include a company unless it has genuine, specific exposure to this node. No narrative association — only structural exposure
+9. IMPORTANT: Tier placement reflects INVESTMENT DISCOVERY VALUE, not just supply chain position. A $3 trillion company with heavy analyst coverage is NEVER a 'hidden enabler' regardless of where it sits in the supply chain. Consider both structural position AND how well-known/followed the company is when assigning to a tier.
 
 Return ONLY a JSON array, no markdown, no backticks:
 [
@@ -182,6 +188,10 @@ function enforceTierFloor(c: EnrichedCompany): EnrichedCompany {
 
   if (heavy) maxTier = Math.min(maxTier, 2);
   if (heavy && cap !== null && cap > 50e9) maxTier = Math.min(maxTier, 1);
+
+  // Tier 3 size constraint: >$5B → Tier 2; Tier 2: >$50B → Tier 1
+  if (c.tier === 3 && cap !== null && cap > 5e9) maxTier = Math.min(maxTier, 2);
+  if (c.tier === 2 && cap !== null && cap > 50e9) maxTier = Math.min(maxTier, 1);
 
   return c.tier <= maxTier ? c : { ...c, tier: maxTier };
 }
@@ -344,7 +354,7 @@ export async function POST(request: NextRequest) {
           const res = await client.messages.create({
             model: "claude-sonnet-4-5-20250929",
             max_tokens: 1024,
-            system: stage2System(node.name, node.description, thesisText),
+            system: stage2System(node.name, node.description, thesisText, tier),
             messages: [{ role: "user", content: "List the companies." }],
           });
           const content = res.content[0];
