@@ -66,6 +66,7 @@ Rules:
 5. List 2-3 companies per node, maximum 3. Only include companies with genuine structural exposure — quality over quantity. Prioritize companies whose products are required by multiple downstream industries — these represent cross-thesis structural importance
 6. Include approximate market cap and analyst coverage level (heavy: 10+ analysts, moderate: 4-9, light: 1-3, minimal: 0)
 7. Do not include a company unless it has genuine, specific exposure to this node. No narrative association — only structural exposure
+8. IMPORTANT: Tier placement reflects INVESTMENT DISCOVERY VALUE, not just supply chain position. A $3 trillion company with heavy analyst coverage is NEVER a 'hidden enabler' regardless of where it sits in the supply chain. Consider both structural position AND how well-known/followed the company is when assigning to a tier.
 
 Return ONLY a JSON array, no markdown, no backticks:
 [
@@ -160,6 +161,29 @@ function calcAlphaScore(tier: number, coverage: string, bottleneck: boolean): nu
   const base = TIER_BASE[tier] ?? 2;
   const adj = COVERAGE_ADJ[coverage] ?? 0;
   return Math.max(1, Math.min(10, base + adj + (bottleneck ? 2 : 0)));
+}
+
+function parseMarketCapNum(cap: string): number | null {
+  const s = cap.replace(/[~$,\s]/g, "");
+  const m = s.match(/^([\d.]+)([KMBTkmbt]?)$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const mul: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+  return n * (mul[m[2].toLowerCase()] ?? 1);
+}
+
+function enforceTierFloor(c: EnrichedCompany): EnrichedCompany {
+  const cap = parseMarketCapNum(c.marketCap);
+  const heavy = c.analyst_coverage === "heavy";
+  let maxTier = 3;
+
+  if (cap !== null && cap > 100e9) maxTier = Math.min(maxTier, 1);
+  else if (cap !== null && cap > 30e9) maxTier = Math.min(maxTier, 2);
+
+  if (heavy) maxTier = Math.min(maxTier, 2);
+  if (heavy && cap !== null && cap > 50e9) maxTier = Math.min(maxTier, 1);
+
+  return c.tier <= maxTier ? c : { ...c, tier: maxTier };
 }
 
 const PRIVATE_TICKER_PATTERNS = /private|not publicly traded|n\/a|not listed|unlisted/i;
@@ -350,7 +374,7 @@ export async function POST(request: NextRequest) {
     );
 
     // ── Combine, filter private, and deduplicate ────────────────────────────
-    const allCompanies = nodeResults.flat().filter(isPubliclyTraded);
+    const allCompanies = nodeResults.flat().filter(isPubliclyTraded).map(enforceTierFloor);
     const deduplicated = deduplicateCompanies(allCompanies);
 
     const result: ThesisResult = { tier0: [], tier1: [], tier2: [], tier3: [] };
