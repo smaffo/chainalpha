@@ -47,9 +47,14 @@ Return ONLY a JSON object, no markdown, no backticks:
 // ── Stage 2: memory-based company population per node ────────────────────────
 
 function stage2System(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
-  const countInstruction = tier === 0
-    ? "List 2-3 companies maximum. For Tier 0: These MUST be the most recognizable, largest companies driving this thesis. The user should look at Tier 0 and immediately understand what the thesis is about. For an AI thesis, that means NVIDIA, Amazon, Microsoft etc. Do NOT try to be creative or obscure in Tier 0 — this tier is context, not discovery."
-    : "List exactly 2 companies. No more.";
+  let countInstruction: string;
+  if (tier === 0) {
+    countInstruction = "List 2-3 companies maximum. For Tier 0 these MUST be the largest, most recognizable companies driving this thesis. For an AI data center thesis that means Microsoft, Amazon, Google, NVIDIA. Do NOT be creative or obscure in Tier 0 — this tier is context, not discovery.";
+  } else if (tier === 3) {
+    countInstruction = "List exactly 2 companies. Tier 3 companies MUST be under $2B market cap with light or minimal analyst coverage. These are the names an informed investor has NOT heard of — search specifically for small-cap and micro-cap companies. Do NOT list large or well-known companies in Tier 3.";
+  } else {
+    countInstruction = "List exactly 2 companies. No more.";
+  }
   return `You are a financial research analyst specializing in public equity identification. List publicly traded companies that operate in the following supply chain category:
 
 NODE: ${nodeName}
@@ -192,7 +197,7 @@ function enforceTierFloor(c: EnrichedCompany): EnrichedCompany {
 }
 
 const PRIVATE_TICKER_RE = /private|not publicly traded|n\/a|not listed|unlisted/i;
-const PRIVATE_NAME_RE = /\(private|\bnot investable\b/i;
+const PRIVATE_NAME_RE = /\bprivate\b|not publicly traded|n\/a|\bnot investable\b/i;
 const ACQUIRED_RE = /\bacquired\b|\bdelisted\b/i;
 
 function isPubliclyTraded(c: EnrichedCompany): boolean {
