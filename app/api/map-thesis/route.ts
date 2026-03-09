@@ -44,60 +44,9 @@ Return ONLY a JSON object, no markdown, no backticks:
   ]
 }`;
 
-// ── Step 2A: web search for candidates ───────────────────────────────────────
+// ── Stage 2: memory-based company population per node ────────────────────────
 
-const STEP2A_SYSTEM = `You are a financial research assistant. Your ONLY job is to search the web and find publicly traded companies that operate in a specific supply chain category. Search thoroughly and cast a wide net.
-
-Rules:
-- Search for companies using multiple relevant queries
-- ONLY include companies that are currently publicly traded on major exchanges (NYSE, NASDAQ, LSE, Frankfurt, Tokyo, Hong Kong, Euronext, ASX)
-- Verify each company is real and currently trading (not acquired, not delisted, not private)
-- Use the company's PRIMARY listing ticker and canonical name
-- Include approximate current market cap
-
-Return ONLY a JSON array of candidates, no other text, no markdown:
-[
-  { "company_name": "Full Name", "ticker": "PRIMARY.EXCHANGE", "market_cap": "~$XB" }
-]
-
-Find 8-12 candidate companies. Cast a wide net — include both well-known and obscure names.`;
-
-// ── Step 2B: validate and rank ────────────────────────────────────────────────
-
-const STEP2B_SYSTEM = `You are an investment research analyst specializing in supply chain analysis. You will receive a list of candidate companies found via web search for a specific supply chain node, within the context of an investment thesis.
-
-Your job is to:
-1. VALIDATE: Remove any company that doesn't have genuine, specific structural exposure to this supply chain node. No narrative association — only companies with real revenue tied to this function.
-2. RANK: Order remaining companies by structural importance to this node — companies with higher revenue concentration in this specific function rank higher.
-3. SELECT: Pick the top 2-3 companies that best represent this supply chain node.
-4. ANALYZE each selected company:
-   - chain_reasoning: 1-2 sentences explaining HOW this company specifically connects to this node
-   - description: 1-2 sentences about what the company does
-   - analyst_coverage: heavy (10+ analysts), moderate (4-9), light (1-3), minimal (0)
-   - bottleneck: true ONLY if the company is one of 3 or fewer global suppliers for this function AND customers cannot switch without 12+ months of requalification. Most companies are NOT bottlenecks.
-
-TIER PLACEMENT RULES based on the tier of the parent node:
-- Tier 0: These are context companies. Keep the most recognizable mega-caps.
-- Tier 1: Well-known but not household names. Market cap typically $10B-$200B.
-- Tier 2: Under-followed enablers. Prioritize companies with moderate or light coverage.
-- Tier 3: Deep upstream hidden gems. MUST be under $5B market cap. Prioritize companies with light or minimal coverage. A $60B company is NEVER Tier 3.
-
-Return ONLY a JSON array, no markdown:
-[
-  {
-    "company_name": "Full Name",
-    "ticker": "PRIMARY.EXCHANGE",
-    "market_cap": "~$XB",
-    "analyst_coverage": "moderate",
-    "bottleneck": false,
-    "chain_reasoning": "Specific explanation of structural connection",
-    "description": "What the company does"
-  }
-]`;
-
-// ── Fallback: memory-based approach (when 2A fails) ───────────────────────────
-
-function fallbackSystem(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
+function stage2System(nodeName: string, nodeDesc: string, thesisText: string, tier: number): string {
   const countInstruction = tier === 0
     ? "List 2-3 companies maximum. For Tier 0: These MUST be the most recognizable, largest companies driving this thesis. The user should look at Tier 0 and immediately understand what the thesis is about. For an AI thesis, that means NVIDIA, Amazon, Microsoft etc. Do NOT try to be creative or obscure in Tier 0 — this tier is context, not discovery."
     : "List exactly 2 companies. No more.";
@@ -159,12 +108,6 @@ interface RawCompany {
   description: string;
 }
 
-interface CandidateCompany {
-  company_name: string;
-  ticker: string;
-  market_cap: string;
-}
-
 interface EnrichedCompany {
   name: string;
   ticker: string;
@@ -210,14 +153,6 @@ function parseJsonArray(text: string): unknown[] {
     } catch { /* fall through */ }
   }
   return [];
-}
-
-// Handles text blocks from responses that may include web_search result blocks
-function extractText(content: Array<{ type: string; text?: string }>): string {
-  return content
-    .filter((b) => b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text as string)
-    .join("\n");
 }
 
 const COVERAGE_ADJ: Record<string, number> = { minimal: 2, light: 1, moderate: 0, heavy: -1 };
@@ -300,6 +235,14 @@ function deduplicateCompanies(companies: EnrichedCompany[]): EnrichedCompany[] {
   return Array.from(byTicker.values());
 }
 
+const COVERAGE_NORM: Record<string, string> = {
+  high: "heavy", heavy: "heavy", moderate: "moderate", medium: "moderate",
+  light: "light", minimal: "minimal", low: "minimal", none: "minimal",
+};
+function normCoverage(v: string): string {
+  return COVERAGE_NORM[v?.toLowerCase()] ?? "moderate";
+}
+
 function toEnriched(raw: RawCompany[], tier: number, nodeName: string): EnrichedCompany[] {
   return raw.map((c): EnrichedCompany => ({
     name: c.company_name,
@@ -308,81 +251,28 @@ function toEnriched(raw: RawCompany[], tier: number, nodeName: string): Enriched
     description: c.description,
     chain_reasoning: c.chain_reasoning,
     bottleneck: Boolean(c.bottleneck),
-    analyst_coverage: c.analyst_coverage ?? "moderate",
-    alphaScore: String(calcAlphaScore(tier, c.analyst_coverage ?? "moderate", Boolean(c.bottleneck))),
+    analyst_coverage: normCoverage(c.analyst_coverage),
+    alphaScore: String(calcAlphaScore(tier, normCoverage(c.analyst_coverage), Boolean(c.bottleneck))),
     supply_chain_node: nodeName,
     tier,
   }));
 }
 
-// ── Node processing (2A → 2B with fallback) ───────────────────────────────────
+// ── Node processing ───────────────────────────────────────────────────────────
 
 async function processNode(tier: number, node: StructureNode, thesisText: string): Promise<EnrichedCompany[]> {
-  // Step 2A: web search for candidates
-  let candidates: CandidateCompany[] = [];
   try {
-    const res2A = await client.messages.create({
-      model: "claude-sonnet-4-5-20250929",
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      system: STEP2A_SYSTEM,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ type: "web_search_20250305", name: "web_search" }] as any,
-      messages: [{
-        role: "user",
-        content: `Search the web for publicly traded companies operating in: ${node.name} — ${node.description}. Find companies across all major global exchanges. Include both large established players and small under-followed specialists.`,
-      }],
+      system: stage2System(node.name, node.description, thesisText, tier),
+      messages: [{ role: "user", content: "List the companies." }],
     });
-    const text2A = extractText(res2A.content as Array<{ type: string; text?: string }>);
-    const parsed = parseJsonArray(text2A);
-    if (parsed.length > 0) {
-      candidates = parsed as CandidateCompany[];
-    }
+    const content = res.content[0];
+    if (content.type !== "text") return [];
+    return toEnriched(parseJsonArray(content.text) as RawCompany[], tier, node.name);
   } catch (err) {
-    console.error(`map-thesis step2A: node "${node.name}" search failed:`, err);
-  }
-
-  // If 2A yielded no candidates, fall back to memory-based generation
-  if (candidates.length === 0) {
-    console.warn(`map-thesis step2A: no candidates for "${node.name}", using fallback`);
-    try {
-      const res = await client.messages.create({
-        model: "claude-sonnet-4-5-20250929",
-        max_tokens: 1024,
-        system: fallbackSystem(node.name, node.description, thesisText, tier),
-        messages: [{ role: "user", content: "List the companies." }],
-      });
-      const content = res.content[0];
-      if (content.type !== "text") return [];
-      return toEnriched(parseJsonArray(content.text) as RawCompany[], tier, node.name);
-    } catch (err) {
-      console.error(`map-thesis fallback: node "${node.name}" failed:`, err);
-      return [];
-    }
-  }
-
-  // Step 2B: validate, rank, and analyze candidates
-  try {
-    const res2B = await client.messages.create({
-      model: "claude-sonnet-4-5-20250929",
-      max_tokens: 1024,
-      system: STEP2B_SYSTEM,
-      messages: [{
-        role: "user",
-        content: `Thesis: ${thesisText}
-Supply chain node: ${node.name} — ${node.description}
-Tier: ${tier}
-
-Candidate companies found via web search:
-${JSON.stringify(candidates, null, 2)}
-
-Validate, rank, and select the top 2-3 companies. Apply the tier placement rules strictly.`,
-      }],
-    });
-    const content2B = res2B.content[0];
-    if (content2B.type !== "text") return [];
-    return toEnriched(parseJsonArray(content2B.text) as RawCompany[], tier, node.name);
-  } catch (err) {
-    console.error(`map-thesis step2B: node "${node.name}" validation failed:`, err);
+    console.error(`map-thesis stage2: node "${node.name}" failed:`, err);
     return [];
   }
 }
@@ -473,7 +363,7 @@ export async function POST(request: NextRequest) {
 
     // ── Stage 1: structural chain map ─────────────────────────────────────────
     const s1Response = await client.messages.create({
-      model: "claude-sonnet-4-5-20250929",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 2048,
       system: STAGE1_SYSTEM,
       messages: [{ role: "user", content: `Thesis: ${thesisText}` }],
@@ -492,7 +382,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Mapping failed — please try again in a moment" }, { status: 500 });
     }
 
-    // ── Stage 2: process all nodes in parallel (2A search → 2B validate) ─────
+    // ── Stage 2: populate companies per node in parallel ─────────────────────
     const nodeJobs: Array<{ tier: number; node: StructureNode }> = [];
     for (const tierData of structure.tiers ?? []) {
       for (const node of tierData.nodes ?? []) {
