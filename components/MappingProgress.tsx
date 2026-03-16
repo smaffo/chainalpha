@@ -3,18 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 
 const MESSAGES = [
-  "Analyzing macro thesis...",
-  "Tracing supply chain layers...",
-  "Identifying Tier 0 obvious plays...",
-  "Mapping Tier 1 smart money targets...",
-  "Discovering Tier 2 hidden enablers...",
-  "Uncovering Tier 3 deep upstream...",
-  "Detecting bottlenecks...",
-  "Scoring alpha potential...",
-  "Finalizing chain map...",
+  "Analyzing investment trend...",
+  "Mapping industrial supply chain...",
+  "Identifying key production stages...",
+  "Evaluating structural bottlenecks...",
+  "Scoring supplier concentration...",
+  "Assessing switching costs...",
+  "Finalizing chain structure...",
 ];
 
-const TOTAL_SECS = 70;
+const TOTAL_SECS = 20;
 
 interface MappingProgressProps {
   error?: string | null;
@@ -34,7 +32,7 @@ export function MappingProgress({ error, onRetry }: MappingProgressProps) {
 
     const msgTimer = setInterval(
       () => setMsgIdx((i) => Math.min(i + 1, MESSAGES.length - 1)),
-      8_000
+      3_000
     );
     const elapsedTimer = setInterval(
       () => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)),

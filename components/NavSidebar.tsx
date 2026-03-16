@@ -65,6 +65,26 @@ function IconHome({ className }: { className?: string }) {
   );
 }
 
+function IconBottleneck({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 3h8l-2 6h-4L8 3z" />
+      <path d="M10 9v3l-4 6h12l-4-6v-3" />
+      <line x1="10" y1="15" x2="14" y2="15" />
+    </svg>
+  );
+}
+
 function IconBookmark({ className }: { className?: string }) {
   return (
     <svg
@@ -115,6 +135,12 @@ export function NavSidebar() {
       active: pathname === "/",
     },
     {
+      href: "/bottleneck",
+      icon: IconBottleneck,
+      label: "Bottleneck",
+      active: pathname.startsWith("/bottleneck"),
+    },
+    {
       href: "/radar",
       icon: IconRadar,
       label: "Radar",
@@ -125,7 +151,7 @@ export function NavSidebar() {
       icon: IconLibrary,
       label: "Library",
       active:
-        pathname.startsWith("/library") || pathname.startsWith("/research"),
+        pathname.startsWith("/library") || pathname.startsWith("/trend"),
     },
     {
       href: "/watchlist",

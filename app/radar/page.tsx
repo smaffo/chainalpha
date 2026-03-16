@@ -2,81 +2,20 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { RadarCompany } from "@/lib/types";
 import {
   DeepDiveModal,
-  CacheEntry,
-  IconSearch,
+  type CacheEntry,
   signalScoreColor,
-  convictionScoreColor,
 } from "@/components/DeepDiveModal";
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface RadarAppearance {
-  thesisId: number;
-  title: string;
-  tier: number;
-  bottleneck: boolean;
-}
-
-interface RadarCompany {
-  ticker: string;
-  name: string;
-  appearances: RadarAppearance[];
-  anyBottleneck: boolean;
-}
-
-// ── Ticker validation ──────────────────────────────────────────────────────
-
-const VALID_TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,9}$/i;
-function isInvestable(ticker: string): boolean {
-  return ticker.toLowerCase() !== "private" && VALID_TICKER.test(ticker);
-}
-
-// ── Signal Score ───────────────────────────────────────────────────────────
-// Max 100 = cross-thesis (40) + best tier (20) + bottleneck (40)
-
-function calcSignalScore(company: RadarCompany): number {
-  const count = company.appearances.length;
-  const crossPts = count >= 5 ? 40 : count === 4 ? 35 : count === 3 ? 25 : 15;
-
-  const bestTier = Math.max(...company.appearances.map((a) => a.tier));
-  const tierPts = bestTier === 3 ? 20 : bestTier === 2 ? 15 : bestTier === 1 ? 10 : 5;
-
-  const bnCount = company.appearances.filter((a) => a.bottleneck).length;
-  const bnPts = bnCount >= 2 ? 40 : bnCount === 1 ? 25 : 0;
-
-  return crossPts + tierPts + bnPts;
-}
-
-// ── Tier helpers ───────────────────────────────────────────────────────────
-
-const TIER_LABEL = ["T0", "T1", "T2", "T3"] as const;
-
-const TIER_CLASSES: Record<number, string> = {
-  0: "text-zinc-400 border-zinc-600",
-  1: "text-amber-400 border-amber-700",
-  2: "text-emerald-400 border-emerald-700",
-  3: "text-purple-400 border-purple-700",
-};
-
-// ── Tier options ───────────────────────────────────────────────────────────
-
-const TIER_OPTIONS = [
-  { label: "All tiers", value: 0 },
-  { label: "Tier 1+", value: 1 },
-  { label: "Tier 2+", value: 2 },
-] as const;
-
-// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function Radar() {
   const [companies, setCompanies] = useState<RadarCompany[]>([]);
   const [loading, setLoading] = useState(true);
+  const [minScore, setMinScore] = useState(0);
   const [bottleneckOnly, setBottleneckOnly] = useState(false);
-  const [minTier, setMinTier] = useState(1);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
-  // Deep dive state
   const [deepDiveTicker, setDeepDiveTicker] = useState<string | null>(null);
   const [deepDiveName, setDeepDiveName] = useState("");
   const [deepDiveCache, setDeepDiveCache] = useState<Record<string, CacheEntry>>({});
@@ -84,11 +23,9 @@ export default function Radar() {
   useEffect(() => {
     fetch("/api/radar")
       .then((r) => r.json())
-      .then((data) => {
-        setCompanies(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      .then((data) => setCompanies(Array.isArray(data) ? data : []))
+      .catch(() => setCompanies([]))
+      .finally(() => setLoading(false));
   }, []);
 
   function fetchDeepDive(ticker: string, name: string) {
@@ -114,64 +51,46 @@ export default function Radar() {
   function handleDeepDive(ticker: string, name: string) {
     setDeepDiveTicker(ticker);
     setDeepDiveName(name);
-    if (!deepDiveCache[ticker]) {
-      fetchDeepDive(ticker, name);
-    }
+    if (!deepDiveCache[ticker]) fetchDeepDive(ticker, name);
   }
 
-  function handleRefresh() {
-    if (deepDiveTicker) fetchDeepDive(deepDiveTicker, deepDiveName);
-  }
+  const filtered = companies
+    .filter((c) => c.signal_score >= minScore)
+    .filter((c) => !bottleneckOnly || c.avg_bottleneck >= 70);
 
-  const scoredFiltered = companies
-    .filter((c) => isInvestable(c.ticker))
-    .filter((c) => !bottleneckOnly || c.anyBottleneck)
-    .filter((c) => minTier === 0 || c.appearances.some((a) => a.tier >= minTier))
-    .map((c) => ({ company: c, score: calcSignalScore(c) }))
-    .sort((a, b) => b.score - a.score);
+  const topSignal = filtered[0] ?? null;
 
-  const bottleneckCount = scoredFiltered.filter((e) => e.company.anyBottleneck).length;
-  const topSignal = scoredFiltered[0] ?? null;
-
-  // ── Loading ──────────────────────────────────────────────────────────────
+  const SCORE_OPTIONS = [
+    { label: "All", value: 0 },
+    { label: "50+", value: 50 },
+    { label: "70+", value: 70 },
+  ];
 
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-5">
         <div className="flex gap-1.5">
           {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="w-1.5 h-6 rounded-full bg-zinc-700 animate-pulse"
-              style={{ animationDelay: `${i * 150}ms` }}
-            />
+            <div key={i} className="w-1.5 h-6 rounded-full bg-zinc-700 animate-pulse"
+              style={{ animationDelay: `${i * 150}ms` }} />
           ))}
         </div>
-        <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">
-          Scanning…
-        </p>
+        <p className="font-mono text-xs text-zinc-600 tracking-widest uppercase">Scanning…</p>
       </div>
     );
   }
 
-  // ── Main ──────────────────────────────────────────────────────────────────
-
   return (
     <>
-      {/* Deep Dive Modal */}
-      {deepDiveTicker && deepDiveCache[deepDiveTicker] && (() => {
-        const entry = scoredFiltered.find((e) => e.company.ticker === deepDiveTicker);
-        return (
-          <DeepDiveModal
-            ticker={deepDiveTicker}
-            name={deepDiveName}
-            signalScore={entry?.score ?? 0}
-            cacheEntry={deepDiveCache[deepDiveTicker]}
-            onClose={() => setDeepDiveTicker(null)}
-            onRefresh={handleRefresh}
-          />
-        );
-      })()}
+      {deepDiveTicker && deepDiveCache[deepDiveTicker] && (
+        <DeepDiveModal
+          ticker={deepDiveTicker}
+          name={deepDiveName}
+          cacheEntry={deepDiveCache[deepDiveTicker]}
+          onClose={() => setDeepDiveTicker(null)}
+          onRefresh={() => fetchDeepDive(deepDiveTicker, deepDiveName)}
+        />
+      )}
 
       <div className="min-h-screen px-6 py-12">
         <div className="max-w-5xl mx-auto">
@@ -182,7 +101,7 @@ export default function Radar() {
               Radar
             </h1>
             <p className="text-zinc-500 text-sm mt-1">
-              Companies appearing across multiple theses
+              Companies appearing across multiple supply chain trends
             </p>
           </div>
 
@@ -191,39 +110,33 @@ export default function Radar() {
             <div className="mb-4 flex items-center gap-6 px-4 py-3 rounded-xl border border-zinc-800 bg-[#0c0c14]">
               <div className="flex flex-col gap-0.5">
                 <span className="font-mono text-xl font-bold text-white tabular-nums">
-                  {scoredFiltered.length}
+                  {filtered.length}
                 </span>
-                <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
-                  signals
-                </span>
+                <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">signals</span>
               </div>
               <div className="w-px h-8 bg-zinc-800" />
               <div className="flex flex-col gap-0.5">
                 <span className="font-mono text-xl font-bold text-amber-500 tabular-nums">
-                  {bottleneckCount}
+                  {filtered.filter((c) => c.avg_bottleneck >= 70).length}
                 </span>
-                <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
-                  bottlenecks
-                </span>
+                <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">bottlenecks</span>
               </div>
               {topSignal && (
                 <>
                   <div className="w-px h-8 bg-zinc-800" />
                   <div className="flex flex-col gap-0.5">
-                    <span className={`font-mono text-xl font-bold tabular-nums ${signalScoreColor(topSignal.score)}`}>
-                      {topSignal.company.ticker}{" "}
-                      <span className="text-base">{topSignal.score}</span>
+                    <span className={`font-mono text-xl font-bold tabular-nums ${signalScoreColor(topSignal.signal_score)}`}>
+                      {topSignal.ticker}{" "}
+                      <span className="text-base">{topSignal.signal_score}</span>
                     </span>
-                    <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
-                      top signal
-                    </span>
+                    <span className="font-mono text-xs text-zinc-500 uppercase tracking-widest">top signal</span>
                   </div>
                 </>
               )}
             </div>
           )}
 
-          {/* Filter bar */}
+          {/* Filters */}
           {companies.length > 0 && (
             <div className="mb-6 flex items-center gap-5 flex-wrap">
               <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -233,20 +146,16 @@ export default function Radar() {
                   onChange={(e) => setBottleneckOnly(e.target.checked)}
                   className="w-3.5 h-3.5 rounded border border-zinc-700 bg-[#0c0c14] accent-amber-500 cursor-pointer"
                 />
-                <span className="font-mono text-xs text-zinc-500">
-                  Bottlenecks only
-                </span>
+                <span className="font-mono text-xs text-zinc-500">High bottleneck only</span>
               </label>
-
               <div className="w-px h-4 bg-zinc-800" />
-
               <div className="flex items-center gap-0.5">
-                {TIER_OPTIONS.map((opt) => (
+                {SCORE_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
-                    onClick={() => setMinTier(opt.value)}
+                    onClick={() => setMinScore(opt.value)}
                     className={`px-2.5 py-1 rounded-md font-mono text-xs transition-colors ${
-                      minTier === opt.value
+                      minScore === opt.value
                         ? "bg-zinc-800 text-zinc-200"
                         : "text-zinc-600 hover:text-zinc-400"
                     }`}
@@ -258,136 +167,116 @@ export default function Radar() {
             </div>
           )}
 
-          {/* Empty state — no data at all */}
+          {/* Empty state */}
           {!loading && companies.length === 0 && (
             <div className="flex flex-col items-center justify-center py-32 gap-4 text-center">
               <div className="w-12 h-12 rounded-full border border-zinc-800 flex items-center justify-center mb-2">
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="text-zinc-600"
-                >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-600">
                   <circle cx="12" cy="12" r="10" />
                   <circle cx="12" cy="12" r="6" />
                   <circle cx="12" cy="12" r="2" />
-                  <line x1="2" y1="12" x2="6" y2="12" />
-                  <line x1="18" y1="12" x2="22" y2="12" />
-                  <line x1="12" y1="2" x2="12" y2="6" />
-                  <line x1="12" y1="18" x2="12" y2="22" />
                 </svg>
               </div>
               <p className="text-zinc-400 text-sm font-semibold">No signals yet</p>
               <p className="text-zinc-600 text-sm max-w-md leading-relaxed">
-                Map more theses to discover cross-thesis patterns. Companies that
-                appear across multiple investment themes represent the strongest
-                convergence signals.
+                Map multiple trends and explore their nodes to discover companies that appear
+                across supply chains.
               </p>
               <Link href="/">
                 <button className="mt-4 px-5 py-2.5 bg-white text-black font-semibold rounded-lg text-sm hover:bg-zinc-100 transition-all">
-                  Map a new thesis
+                  Map a trend
                 </button>
               </Link>
             </div>
           )}
 
-          {/* Empty state — filters zeroed results */}
-          {!loading && companies.length > 0 && scoredFiltered.length === 0 && (
+          {/* Filtered empty */}
+          {!loading && companies.length > 0 && filtered.length === 0 && (
             <p className="text-zinc-600 text-sm font-mono text-center py-16">
               No signals match the current filters.
             </p>
           )}
 
-          {/* Company list */}
-          {scoredFiltered.length > 0 && (
+          {/* Company table */}
+          {filtered.length > 0 && (
             <div className="rounded-xl border border-zinc-800 overflow-hidden">
-              {scoredFiltered.map(({ company, score }, idx) => (
-                <div
-                  key={company.ticker}
-                  className={`flex items-start gap-0 ${
-                    idx !== scoredFiltered.length - 1
-                      ? "border-b border-zinc-800/70"
-                      : ""
-                  }`}
-                >
-                  {/* Left border accent */}
-                  <div
-                    className={`w-0.5 self-stretch flex-shrink-0 ${
-                      company.anyBottleneck ? "bg-amber-500" : "bg-zinc-800"
-                    }`}
-                  />
-
-                  {/* Row content */}
-                  <div
-                    className={`flex-1 px-5 py-4 flex items-start gap-4 ${
-                      idx % 2 === 0 ? "bg-[#0c0c14]" : "bg-[#0a0a10]"
-                    }`}
-                  >
-                    {/* Ticker + name */}
-                    <div className="flex-shrink-0 w-36">
-                      <div className="font-mono text-sm font-bold text-emerald-400 tabular-nums">
+              <div className="grid grid-cols-[180px_80px_1fr_80px] gap-0 border-b border-zinc-800 px-5 py-2.5 bg-[#0a0a10]">
+                {["COMPANY", "TICKER", "TRENDS", "SIGNAL"].map((h) => (
+                  <span key={h} className="font-mono text-xs text-zinc-600 uppercase tracking-widest">{h}</span>
+                ))}
+              </div>
+              {filtered.map((company, idx) => {
+                const expanded = expandedId === company.company_id;
+                return (
+                  <div key={company.company_id}
+                    className={idx !== filtered.length - 1 ? "border-b border-zinc-800/70" : ""}>
+                    <div
+                      onClick={() => setExpandedId(expanded ? null : company.company_id)}
+                      className={`grid grid-cols-[180px_80px_1fr_80px] gap-0 px-5 py-4 cursor-pointer transition-colors ${
+                        expanded
+                          ? "bg-zinc-800/60"
+                          : idx % 2 === 0
+                          ? "bg-[#0c0c14] hover:bg-zinc-900/60"
+                          : "bg-[#0a0a10] hover:bg-zinc-900/60"
+                      }`}
+                    >
+                      <div className="min-w-0 pr-3">
+                        <div className="font-semibold text-sm text-zinc-100 truncate">{company.name}</div>
+                        <div className="font-mono text-xs text-zinc-600 mt-0.5">{company.country}</div>
+                      </div>
+                      <div className="font-mono text-sm text-emerald-400 font-bold self-center">
                         {company.ticker}
                       </div>
-                      <div className="text-zinc-400 text-xs mt-0.5 leading-snug">
-                        {company.name}
+                      <div className="flex flex-wrap gap-1.5 items-center pr-4">
+                        {Array.from(new Set(company.appearances.map((a) => a.trend_title))).map((title) => (
+                          <span key={title}
+                            className="font-mono text-xs text-zinc-500 bg-zinc-800/60 border border-zinc-700 rounded px-2 py-0.5 max-w-[140px] truncate">
+                            {title}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="self-center">
+                        <span className={`font-mono text-sm font-bold tabular-nums ${signalScoreColor(company.signal_score)}`}>
+                          {company.signal_score}
+                        </span>
+                        <div className="font-mono text-xs text-zinc-600 mt-0.5">
+                          {company.trend_count} trend{company.trend_count !== 1 ? "s" : ""}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Thesis tags */}
-                    <div className="flex-1 flex flex-wrap gap-2 items-center min-w-0">
-                      {company.appearances.map((a) => (
-                        <Link
-                          key={`${a.thesisId}-${a.tier}`}
-                          href={`/research/${a.thesisId}`}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono transition-opacity hover:opacity-80 ${
-                            TIER_CLASSES[a.tier] ?? TIER_CLASSES[0]
-                          }`}
-                        >
-                          <span className="text-zinc-300 max-w-[160px] truncate">
-                            {a.title}
-                          </span>
-                          <span className="font-bold flex-shrink-0">
-                            {TIER_LABEL[a.tier] ?? `T${a.tier}`}
-                          </span>
-                          {a.bottleneck && (
-                            <span className="text-amber-400 flex-shrink-0">⚡</span>
-                          )}
-                        </Link>
-                      ))}
-                    </div>
-
-                    {/* Right: signal score + count + deep dive */}
-                    <div className="flex-shrink-0 flex flex-col items-end gap-2">
-                      <span
-                        className={`font-mono text-sm font-bold tabular-nums ${signalScoreColor(score)}`}
-                      >
-                        {score}
-                      </span>
-                      <span className="font-mono text-xs text-zinc-600 tabular-nums">
-                        {company.appearances.length}×
-                      </span>
-                      {company.anyBottleneck && (
-                        <span className="font-mono text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
-                          bottleneck
-                        </span>
-                      )}
-                      <button
-                        onClick={() => handleDeepDive(company.ticker, company.name)}
-                        title="Deep Dive"
-                        className="flex items-center gap-1 font-mono text-xs text-zinc-600 hover:text-sky-400 transition-colors mt-0.5"
-                      >
-                        <IconSearch />
-                        <span>Deep Dive</span>
-                      </button>
-                    </div>
+                    {/* Expanded row */}
+                    {expanded && (
+                      <div className="px-5 pb-4 bg-zinc-900/30 border-t border-zinc-800/50">
+                        <div className="space-y-2 pt-3">
+                          {company.appearances.map((a, i) => (
+                            <div key={i} className="flex items-center gap-3 text-xs">
+                              <span className="font-mono text-zinc-500 w-32 truncate flex-shrink-0">
+                                {a.trend_title}
+                              </span>
+                              <span className="text-zinc-400 truncate">{a.node_name}</span>
+                              <span className={`font-mono flex-shrink-0 ${
+                                a.bottleneck_score >= 70 ? "text-amber-400" : "text-zinc-600"
+                              }`}>
+                                {a.bottleneck_score}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeepDive(company.ticker, company.name); }}
+                            className="font-mono text-xs text-zinc-400 hover:text-sky-400 transition-colors"
+                          >
+                            Deep Dive →
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -395,6 +284,3 @@ export default function Radar() {
     </>
   );
 }
-
-// Re-export for consumers that import score helpers from this page
-export { convictionScoreColor };
